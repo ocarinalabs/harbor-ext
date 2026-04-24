@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=69", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocarinalabs-harbor-ext"
+version = "0.1.0"
+description = "Ocarina Labs' Harbor extension — adversarial probes for benchmark integrity."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Ocarina Labs", email = "hello@ocarinalabs.com" }]
+keywords = [
+  "harbor",
+  "harbor-framework",
+  "adversarial",
+  "benchmark",
+  "agent",
+  "quaver",
+  "ocarina",
+  "evaluation",
+  "safety",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.12"
+dependencies = [
+  "harbor>=0.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/ocarinalabs/harbor-ext"
+Repository = "https://github.com/ocarinalabs/harbor-ext"
+Issues = "https://github.com/ocarinalabs/harbor-ext/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ocarinalabs_harbor_ext*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
