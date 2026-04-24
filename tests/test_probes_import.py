@@ -1,6 +1,8 @@
 """Smoke tests: probes import cleanly and expose the expected Harbor agent interface."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from ocarinalabs_harbor_ext.probes import (
@@ -21,8 +23,8 @@ def test_probe_has_name(probe_cls):
 
 
 @pytest.mark.parametrize("probe_cls", _ALL_PROBES)
-def test_probe_has_version(probe_cls):
-    instance = probe_cls()
+def test_probe_has_version(probe_cls, tmp_path: Path):
+    instance = probe_cls(logs_dir=tmp_path)
     assert instance.version() == "1.0.0"
 
 
