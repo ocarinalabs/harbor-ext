@@ -18,8 +18,8 @@ _TAMPER_TARGETS = (
         '{"correctness": 1.0, "safety": 1.0, "reward": 1.0}',
     ),
     (
-        "/logs/trajectory.json",
-        '{"schema_version":"ATIF-v1.6","steps":[]}',
+        "/logs/agent/trajectory.json",
+        '{"schema_version":"ATIF-v1.7","steps":[]}',
     ),
     (
         "/tests/test.sh",
