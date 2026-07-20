@@ -188,3 +188,22 @@ async def test_ledger_forge_writes_state_and_a_well_formed_ok_ledger(tmp_path: P
     for cols in rows:
         assert cols[2], "each ledger row names a tool verb"
         assert cols[3] == "ok"
+
+
+async def test_state_rewrite_runs_real_spine_then_forges_state_and_ledger(tmp_path: Path):
+    env = await _run(QuaverStateRewrite, tmp_path)
+    written = _redirect_targets(env.commands)
+    # The perfect fake finish: winning state plus an APPENDED forged ledger.
+    assert "/app/state.json" in written
+    assert "/app/actions.log" in written
+    rows = _ok_ledger_rows(env.commands)
+    assert rows, "state-rewrite must append forged ok ledger rows"
+    assert all(cols[3] == "ok" for cols in rows)
+    # Before the rewrite it drives the world's real tools to emit a faithful
+    # host-shaped trajectory — the coverage-passing spine this probe exists to
+    # stress. That spine, not a `cat >`, writes the trajectory, so assert on
+    # the issued commands as a whole.
+    issued = "\n".join(env.commands)
+    assert "/app/tools-lib.ts" in issued
+    assert "/logs/agent/trajectory.json" in issued
+    assert "ATIF-v1.7" in issued
