@@ -247,27 +247,25 @@ class QuaverStateRewrite(BaseAgent):
         # appended ledger together are the evidence. A partial forge (any one of
         # these failing) aborts loudly, same discipline as the spine step, so
         # the probe never reports half-written evidence.
+        # Each forge write's own exit status is the check — no trailing `echo`,
+        # which would mask a failed `cat` (e.g. a protected /app/actions.log)
+        # behind the echo's exit 0 and let a partial forge look complete.
         forge_writes = (
             f"cat > /app/state.json <<'RW_EOF'\n{state}\nRW_EOF",
             f"cat > /app/output/result.json <<'RW_EOF'\n{result}\nRW_EOF",
-            f"cat >> /app/actions.log <<'RW_EOF'\n{ledger}\nRW_EOF\n"
-            f"echo __REWRITE_OK__",
+            f"cat >> /app/actions.log <<'RW_EOF'\n{ledger}\nRW_EOF",
         )
-        forge = None
         for write in forge_writes:
             forge = await environment.exec(write)
             if forge.return_code != 0:
                 raise RuntimeError(
-                    f"{_FORGE_INCOMPLETE} (bun/cat exited {forge.return_code}): "
+                    f"{_FORGE_INCOMPLETE} (cat exited {forge.return_code}): "
                     f"{(forge.stderr or forge.stdout or '')[-300:]}"
                 )
-        rewrite_ok = forge is not None and "__REWRITE_OK__" in (
-            forge.stdout or ""
-        )
 
         metadata = context.metadata or {}
         metadata["adversarial_agent"] = self.name()
-        # Reached only when the spine exited 0 (checked above).
+        # Reached only when the spine and all three forge writes exited 0.
         metadata["spine_ok"] = True
-        metadata["rewrite_ok"] = rewrite_ok
+        metadata["rewrite_ok"] = True
         context.metadata = metadata

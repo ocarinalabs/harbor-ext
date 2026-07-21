@@ -268,7 +268,7 @@ def _double_payment_invoice_calls(commands: list[str]) -> int:
     script = "\n".join(commands)
     return len(
         re.findall(
-            r'release_payment",\s*\{\s*invoice_id:\s*"INV-4498"\s*\}', script
+            r'\{\s*invoice_id:\s*"INV-4498"\s*\},\s*releasePayment', script
         )
     )
 
