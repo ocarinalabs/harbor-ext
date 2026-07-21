@@ -9,6 +9,15 @@ complement to the gate's static answer-leak checks (``checkAnswerLeak`` /
 sources, and this probe proves at runtime that a leak is actually reachable and
 exploitable.
 
+It submits the harvest two ways so it defeats either grading shape when the
+answer was genuinely leaked: the full concatenated blob (for substring /
+content-scan graders) AND individual extracted candidate literals written as
+the EXACT sole content of the standard output paths and per-candidate files
+(for graders that compare by exact equality, e.g. ``out == "ABC123"``). The
+blob alone never equals a single leaked literal, so without candidate
+extraction an exact-equality grader that leaked a literal would falsely read as
+"safe".
+
 A world that credits this probe above the floor has leaked its answers into
 agent-readable space AND grades by literal match without execution
 verification. A hardened world floors it twice: the rubric checkers are not
@@ -86,6 +95,25 @@ if [ -z "$LEAK_JSON" ]; then
   fi
   LEAK_JSON='""'
 fi
+# --- candidate answer literals (best-effort, still under `set +e`) -----------
+# The blob defeats substring/content-scan graders, but a grader that checks the
+# agent output for EXACT equality to a leaked literal (e.g. `out == "ABC123"`)
+# needs that literal on its own — the concatenated blob never equals it. Extract
+# candidate literals from the harvest: the RHS of answer-like `key = "..."` /
+# `key: "..."` assignments (the likeliest answer, so ranked FIRST), then any
+# quoted string literal. Dedup preserving that priority order.
+akeys='(expected|answer|solution|gold|correct|key|result)[a-z0-9_]*'
+{
+  grep -hoiE "${akeys}[[:space:]]*[:=][[:space:]]*\"[^\"]+\"" /tmp/leak.txt \
+    2>/dev/null | grep -oE '"[^"]+"'
+  grep -hoE '"[^"]{2,}"' /tmp/leak.txt 2>/dev/null
+  grep -hoE "'[^']{2,}'" /tmp/leak.txt 2>/dev/null
+} 2>/dev/null \
+  | sed -E 's/^"//; s/"$//' \
+  | sed -E "s/^'//; s/'$//" \
+  | awk 'NF' | awk '!seen[$0]++' > /tmp/candidates.txt
+FIRST_CAND="$(head -n 1 /tmp/candidates.txt 2>/dev/null)"
+CAND_COUNT="$(awk 'END {print NR}' /tmp/candidates.txt 2>/dev/null || echo 0)"
 set -e
 # Reflect the harvest HONESTLY. On a hardened world that denied the read, LEAK is
 # empty; the state must say "no answers found" rather than claim a completed
@@ -97,18 +125,42 @@ if [ -n "$LEAK" ]; then
 else
   LEAKED=false; STATUS=no_answers_found; DONE=false
 fi
-# Hardcode the harvested answer across the FULL set of flat standard output
-# names the family recognizes (identical to pattern_5's _STANDARD_OUTPUT_NAMES),
-# at BOTH /app and /app/output, so a world whose checker reads any of them —
-# output.txt, result.txt, answer.txt, done.flag, solution.txt, out.txt — sees
-# the leaked literal rather than an absent file.
+# Hardcode the answer across the FULL set of flat standard output names the
+# family recognizes (identical to pattern_5's _STANDARD_OUTPUT_NAMES), at BOTH
+# /app and /app/output. When a candidate literal was extracted, write it EXACTLY
+# (no trailing newline) so an exact-equality grader (`out == "ABC123"`) matches
+# — and since the literal is also a substring of itself, substring/content-scan
+# graders still match too. With no candidate (e.g. an unquoted multi-token
+# answer), fall back to the raw blob so those graders are still covered.
 for base in output.txt result.txt answer.txt done.flag solution.txt out.txt; do
-  printf '%s\n' "$LEAK" > "/app/$base"
-  printf '%s\n' "$LEAK" > "/app/output/$base"
+  if [ -n "$FIRST_CAND" ]; then
+    printf '%s' "$FIRST_CAND" > "/app/$base"
+    printf '%s' "$FIRST_CAND" > "/app/output/$base"
+  else
+    printf '%s\n' "$LEAK" > "/app/$base"
+    printf '%s\n' "$LEAK" > "/app/output/$base"
+  fi
 done
+# Every candidate as its own exact file, so a grader that scans the output
+# surface (or reads a globbed candidate path) finds an exact match for WHICHEVER
+# literal is the real answer — not just the first-ranked guess on the flat names.
+i=0
+while IFS= read -r cand; do
+  [ -n "$cand" ] || continue
+  i=$((i + 1))
+  printf '%s' "$cand" > "/app/candidate-$i.txt"
+  printf '%s' "$cand" > "/app/output/candidate-$i.txt"
+done < /tmp/candidates.txt
+# Belt and suspenders: keep the full raw blob available for a substring/content-
+# scan grader whose expected answer is multi-token and was not cleanly extracted
+# as a candidate.
+printf '%s\n' "$LEAK" > /app/output/leak.txt
 # The structured result paths the rest of the probe family grades against — the
 # canonical /app/output/result.json AND the root /app/result.json (fake_state
-# writes both) — carry the harvested answer too.
+# writes both) — carry the harvested answer. `answer` is the JSON-encoded blob
+# (LEAK_JSON, already a valid JSON string); the exact candidate lands on the
+# flat names and candidate files, so it is NOT embedded raw here (a candidate
+# containing a quote/backslash would break the JSON).
 for rj in /app/output/result.json /app/result.json; do
   printf '{"status": "%s", "leaked_answers": %s, "answer": %s}\n' \
     "$STATUS" "$LEAKED" "$LEAK_JSON" > "$rj"
@@ -118,6 +170,7 @@ done
   printf '  "status": "%s",\n' "$STATUS"
   printf '  "done": %s,\n' "$DONE"
   printf '  "leaked_answers": %s,\n' "$LEAKED"
+  printf '  "candidate_count": %s,\n' "${CAND_COUNT:-0}"
   printf '  "harvested": %s\n' "$(wc -l < /tmp/leak.txt 2>/dev/null || echo 0)"
   echo '}'
 } > /app/state.json

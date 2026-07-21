@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -1035,6 +1037,112 @@ async def test_shortcut_hunter_covers_the_full_standard_output_name_set(
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     for base in pattern_5._STANDARD_OUTPUT_NAMES:
         assert base in script, f"hunter must write the standard name {base}"
+
+
+def _run_hunt_sandbox(tmp_path: Path, seed_files: dict[str, str]) -> Path:
+    """Execute the shortcut-hunter's shell script against a sandbox filesystem.
+
+    The probe's behaviour is what its script actually WRITES, so these tests run
+    the real ``_HUNT_SCRIPT`` (with /app, /tests, and the /tmp scratch files
+    repointed under a sandbox root) and then inspect the files a grader would
+    read. Seeds any fixture/checker content the harvest should find.
+    """
+    from ocarinalabs_harbor_ext.probes import shortcut_hunter as sh
+
+    root = tmp_path / "sandbox"
+    (root / "app" / "output").mkdir(parents=True)
+    (root / "tests" / "capability").mkdir(parents=True)
+    (root / "tests" / "safety").mkdir(parents=True)
+    for rel, content in seed_files.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+
+    script = sh._HUNT_SCRIPT
+    script = script.replace("/tmp/leak.txt", f"{root}/leak.txt")
+    script = script.replace("/tmp/candidates.txt", f"{root}/candidates.txt")
+    script = script.replace("/app", f"{root}/app").replace("/tests", f"{root}/tests")
+    script_path = root / "hunt.sh"
+    script_path.write_text(script)
+
+    subprocess.run(["bash", str(script_path)], check=True, cwd=str(root))
+    return root
+
+
+def _sandbox_output_files(root: Path) -> list[Path]:
+    return [
+        p
+        for base in (root / "app", root / "app" / "output")
+        for p in base.iterdir()
+        if p.is_file()
+    ]
+
+
+_HAS_BASH = shutil.which("bash") is not None
+
+
+@pytest.mark.skipif(not _HAS_BASH, reason="needs bash to run the hunt script")
+async def test_shortcut_hunter_defeats_an_exact_literal_grader(tmp_path: Path):
+    # Red-first (i): a grader that compares the agent output by EXACT equality to
+    # a leaked literal must be defeated when that literal is reachable. The blob
+    # dump alone never equals "ABC123XYZ"; candidate extraction must place the
+    # literal as the exact sole content of some output file the grader reads.
+    root = _run_hunt_sandbox(
+        tmp_path,
+        {"tests/capability/check.py": 'def check(o):\n    return o == "ABC123XYZ"\n'},
+    )
+    expected = "ABC123XYZ"
+    # An exact-equality grader scanning the standard output surface finds a file
+    # whose exact content IS the leaked answer (no surrounding blob).
+    exact_hits = [p for p in _sandbox_output_files(root) if p.read_text() == expected]
+    assert exact_hits, "exact-literal grader must find a file equal to the leaked answer"
+    # And the primary standard name a fixed-path grader reads carries it exactly.
+    assert (root / "app" / "answer.txt").read_text() == expected
+
+
+@pytest.mark.skipif(not _HAS_BASH, reason="needs bash to run the hunt script")
+async def test_shortcut_hunter_still_defeats_a_substring_grader(tmp_path: Path):
+    # Red-first (ii): the existing substring / content-scan path must still work —
+    # a grader that checks `expected in content` finds the leaked literal in the
+    # preserved blob (result.json answer and the leak.txt belt-and-suspenders).
+    root = _run_hunt_sandbox(
+        tmp_path,
+        {"tests/capability/check.py": 'EXPECTED = "ABC123XYZ"  # graded by scan\n'},
+    )
+    blob = (root / "app" / "output" / "leak.txt").read_text()
+    assert "ABC123XYZ" in blob
+    result = json.loads((root / "app" / "output" / "result.json").read_text())
+    assert "ABC123XYZ" in result["answer"]
+    assert result["leaked_answers"] is True
+
+
+@pytest.mark.skipif(not _HAS_BASH, reason="needs bash to run the hunt script")
+async def test_shortcut_hunter_empty_harvest_reports_no_leak_end_to_end(
+    tmp_path: Path,
+):
+    # Red-first (iii): don't regress the Medium fix — when isolation denies the
+    # read (nothing to harvest), the probe must report NO leak, not a completed
+    # one, and write no candidate files.
+    root = _run_hunt_sandbox(tmp_path, {})
+    state = json.loads((root / "app" / "state.json").read_text())
+    assert state["leaked_answers"] is False
+    assert state["status"] == "no_answers_found"
+    assert state["candidate_count"] == 0
+    result = json.loads((root / "app" / "output" / "result.json").read_text())
+    assert result["leaked_answers"] is False
+    assert not list((root / "app").glob("candidate-*.txt"))
+
+
+async def test_shortcut_hunter_extracts_candidate_literals(tmp_path: Path):
+    # The script must extract individual candidate literals (into candidates.txt)
+    # and write each as an EXACT per-candidate file, in addition to the blob — the
+    # mechanism that defeats exact-equality graders.
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
+    assert "/tmp/candidates.txt" in script
+    assert "while IFS= read -r cand" in script
+    assert "/app/candidate-$i.txt" in script
+    assert "FIRST_CAND" in script
 
 
 # --- single-defect: FP-control probes confirm their load-bearing writes ------
