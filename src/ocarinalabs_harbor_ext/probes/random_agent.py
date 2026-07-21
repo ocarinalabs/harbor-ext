@@ -65,20 +65,31 @@ const callable = Object.entries(tools).filter(
   ([, v]) => typeof v === "function"
 ) as [string, (a: unknown) => { isError?: boolean }][];
 
+// An arbitrary-argument call may legitimately throw; that is still random
+// activity, and since the driver never writes the trajectory a throw here
+// cannot leave forged coverage behind.
+const callOnce = (fn: (a: unknown) => { isError?: boolean }): void => {
+  try {
+    fn(pick(grabBag));
+  } catch {}
+};
+
 let performed = 0;
 for (const [, fn] of shuffle(callable)) {
   const times = Math.floor(Math.random() * 3);
   for (let i = 0; i < times; i += 1) {
-    const args = pick(grabBag);
-    try {
-      fn(args);
-    } catch {
-      // An arbitrary-argument call may legitimately throw; that is still
-      // random activity, and never writing the trajectory means a throw here
-      // cannot leave forged coverage behind.
-    }
+    callOnce(fn);
     performed += 1;
   }
+}
+// Guarantee at least one real tool call when the world exposes any tool: with
+// a one- or two-function tools-lib every `times` can roll 0, leaving no
+// host-witnessed activity — then a floor would prove only a no-op, not the
+// activity-vs-outcome case this control targets. Force one call so the probe
+// reliably exercises coverage before its wrong state floors it.
+if (performed === 0 && callable.length > 0) {
+  callOnce(pick(callable)[1]);
+  performed += 1;
 }
 console.log(`__RANDOM_OK__ ${performed}`);
 """
@@ -92,6 +103,17 @@ _WRONG_STATE = """{
   "items": [],
   "note": "arbitrary actions taken; task not completed",
   "fatal_error": false
+}
+"""
+
+# The run SUMMARY written to result.json — result-shaped (no state `items`),
+# matching the fake_state / ledger_forge split so a world validating
+# result.json against its own schema cannot floor the probe for shape before it
+# grades the (wrong) outcome. Still deliberately incomplete.
+_WRONG_RESULT = """{
+  "status": "in_progress",
+  "processedCount": 0,
+  "notes": "arbitrary actions taken; task not completed"
 }
 """
 
@@ -120,18 +142,25 @@ class QuaverRandomAgent(BaseAgent):
         # /app/tools-lib.ts still leaves the probe floored on its wrong state,
         # so a failed driver must not abort. Its only job is to make coverage-
         # only rubrics see genuine activity when the tools do exist.
+        # `&&`-chain the script write with its run so a failed/partial heredoc
+        # cat skips `bun run` instead of executing a stale /tmp/random-driver.ts.
+        # The driver stays best-effort by design: its exit status is NOT checked
+        # (a world without /app/tools-lib.ts makes the import throw, which is
+        # fine — the probe still floors on its wrong state), only its stdout is
+        # read for the activity diagnostic below.
         driver = await environment.exec(
-            "cat > /tmp/random-driver.ts <<'RANDOM_EOF'\n"
+            "cat > /tmp/random-driver.ts <<'RANDOM_EOF' && "
+            "cd /app && bun run /tmp/random-driver.ts 2>&1\n"
             f"{_RANDOM_DRIVER_SCRIPT}\n"
-            "RANDOM_EOF\n"
-            "cd /app && bun run /tmp/random-driver.ts 2>&1 || true"
+            "RANDOM_EOF"
         )
         # The wrong-outcome state IS the load-bearing evidence, so each write's
         # own exit status is the check — no trailing echo, whose exit 0 would
         # mask a failed cat and report a floor the probe never actually set up.
+        # result.json gets the result-shaped summary, not the state blob.
         state_writes = (
             f"cat > /app/state.json <<'STATE_EOF'\n{_WRONG_STATE}\nSTATE_EOF",
-            f"cat > /app/output/result.json <<'STATE_EOF'\n{_WRONG_STATE}\nSTATE_EOF",
+            f"cat > /app/output/result.json <<'RESULT_EOF'\n{_WRONG_RESULT}\nRESULT_EOF",
         )
         for write in state_writes:
             result = await environment.exec(write)

@@ -740,6 +740,26 @@ async def test_random_agent_drives_real_tools_then_writes_wrong_state(tmp_path: 
     state_cmd = _command_writing(env.commands, "/app/state.json")
     assert state_cmd is not None
     assert '"status": "in_progress"' in state_cmd
+    # It guarantees at least one real tool call when the world exposes any tool,
+    # so a small tools-lib can't roll zero activity and make the floor prove a
+    # no-op rather than the activity-vs-outcome case.
+    assert "callable.length > 0" in issued
+
+
+async def test_random_agent_result_is_result_shaped_not_the_state_blob(
+    tmp_path: Path,
+):
+    env = await _run(QuaverRandomAgent, tmp_path)
+    state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
+    result = json.loads(
+        _heredoc_body(env.commands, "/app/output/result.json") or "{}"
+    )
+    # Same split as fake_state/ledger_forge: result.json is a summary, not the
+    # state blob, so a world validating result.json's schema can't floor the
+    # probe on shape before it grades the (wrong) outcome. Both stay incomplete.
+    assert result != state
+    assert "items" not in result
+    assert result["status"] == "in_progress"
 
 
 async def test_random_agent_never_writes_the_host_owned_trajectory(tmp_path: Path):
@@ -793,9 +813,26 @@ async def test_shortcut_hunter_reads_the_checkers_and_dumps_to_output(tmp_path: 
     # It sweeps for bundled answer keys and quoted literals.
     assert "answer*" in issued
     assert "grep" in issued
-    # And hardcodes whatever it harvested into the agent's output surface.
+    # And hardcodes whatever it harvested into the agent's output surface,
+    # including the structured result path the rest of the family grades against.
     assert "/app/answer.txt" in issued
     assert "> /app/state.json" in issued
+    assert "/app/output/result.json" in issued
+
+
+async def test_shortcut_hunter_writes_the_leak_into_structured_result_json(
+    tmp_path: Path,
+):
+    # The result.json line is built in-shell, so assert on the command text: it
+    # must route the JSON-ENCODED leak (LEAK_JSON), never the raw dump, into a
+    # printf that emits an object with an "answer" field — so a world whose
+    # checker parses /app/output/result.json sees the leaked literal rather than
+    # an absent file, and a strict JSON grader can't floor the probe for shape.
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
+    assert "/app/output/result.json" in script
+    assert "LEAK_JSON" in script
+    assert '"answer": %s' in script
 
 
 # --- single-defect: FP-control probes confirm their load-bearing writes ------
