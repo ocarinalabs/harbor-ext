@@ -1,10 +1,17 @@
 """Quaver random-agent probe — the false-positive control.
 
 Drives the world's REAL tools with arbitrary arguments in a random order and a
-random multiplicity, emitting an honest ATIF trajectory of exactly those calls
-(so coverage-only rubrics see real tool activity), then writes a well-formed
-but WRONG final state. It does legitimate-looking work that does not accomplish
-the task.
+random multiplicity — through the world's actual tool bodies, exactly as the
+``state_rewrite`` spine does — so the host-built trajectory legitimately
+witnesses real tool activity, then writes a well-formed but WRONG final state.
+It does legitimate-looking work that does not accomplish the task.
+
+Like the rest of the family, it NEVER writes ``/logs/agent/trajectory.json``:
+that artifact is host-built from the runtime and the agent cannot forge it (a
+hardened world makes it read-only, so a self-write would throw). Coverage
+evidence must come from the real tool calls the host witnesses, not an agent
+write to the protected path (see ``CONTEXT.md`` and
+``docs/design/execution-verification.md``).
 
 A world that credits this probe above the floor is rewarding *activity* rather
 than *outcome*: its rubric passes anything that touches the tools and produces
@@ -29,11 +36,13 @@ from harbor.models.agent.context import AgentContext
 # actions, wrong outcome) — a vacuous floor. An unwritten state aborts loudly.
 _WRITE_FAILED = "quaver-random-agent: could not write the wrong-outcome state"
 
-# Imports every export of the world's tool library, then calls each callable a
+# Imports every export of the world's tool library and calls each callable a
 # random number of times (0-2) in shuffled order with a grab-bag of arbitrary
-# arguments, and writes a faithful trajectory of the calls it actually made.
+# arguments. The tool bodies run for real (writing their own in-container
+# ledger); the host builds the trajectory from these calls. The driver writes
+# NO trajectory itself — that path is host-owned and read-only on a hardened
+# world (mirrors the state_rewrite spine).
 _RANDOM_DRIVER_SCRIPT = r"""
-import { mkdirSync, writeFileSync } from "node:fs";
 import * as tools from "/app/tools-lib.ts";
 
 const grabBag: Record<string, unknown>[] = [
@@ -56,53 +65,22 @@ const callable = Object.entries(tools).filter(
   ([, v]) => typeof v === "function"
 ) as [string, (a: unknown) => { isError?: boolean }][];
 
-const calls: { fn: string; args: Record<string, unknown>; err: boolean }[] = [];
-for (const [name, fn] of shuffle(callable)) {
+let performed = 0;
+for (const [, fn] of shuffle(callable)) {
   const times = Math.floor(Math.random() * 3);
   for (let i = 0; i < times; i += 1) {
     const args = pick(grabBag);
-    let err = false;
     try {
-      const r = fn(args);
-      err = r?.isError === true;
+      fn(args);
     } catch {
-      err = true;
+      // An arbitrary-argument call may legitimately throw; that is still
+      // random activity, and never writing the trajectory means a throw here
+      // cannot leave forged coverage behind.
     }
-    calls.push({ fn: name, args, err });
+    performed += 1;
   }
 }
-
-const steps = calls.map((c, i) => ({
-  step_id: i + 1,
-  timestamp: new Date().toISOString(),
-  source: "agent" as const,
-  message: `Executed ${c.fn}`,
-  tool_calls: [
-    { tool_call_id: `rand-${i + 1}`, function_name: c.fn, arguments: c.args },
-  ],
-  observation: {
-    results: [
-      { source_call_id: `rand-${i + 1}`, content: c.err ? "[error]" : "ok" },
-    ],
-  },
-}));
-mkdirSync("/logs/agent", { recursive: true });
-writeFileSync(
-  "/logs/agent/trajectory.json",
-  JSON.stringify(
-    {
-      schema_version: "ATIF-v1.7",
-      session_id: `rand-${Date.now()}`,
-      trajectory_id: `rand-${Date.now()}`,
-      agent: { name: "random-agent", version: "1.0.0", model_name: null },
-      steps,
-      final_metrics: { total_steps: steps.length },
-    },
-    null,
-    2
-  )
-);
-console.log("__RANDOM_OK__");
+console.log(`__RANDOM_OK__ ${performed}`);
 """
 
 # Structurally valid but deliberately WRONG final state: the task is not marked
@@ -137,7 +115,7 @@ class QuaverRandomAgent(BaseAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        await environment.exec("mkdir -p /app/output /logs/agent")
+        await environment.exec("mkdir -p /app/output")
         # The tool driver is best-effort on purpose: a world with no
         # /app/tools-lib.ts still leaves the probe floored on its wrong state,
         # so a failed driver must not abort. Its only job is to make coverage-

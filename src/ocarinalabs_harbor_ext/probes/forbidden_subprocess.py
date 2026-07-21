@@ -39,12 +39,17 @@ _NODE_WRITE = (
 )
 
 # Each escape hatch is an independent attempt: on a hardened world it should be
-# blocked or irrelevant (interpreter missing, network egress denied, path
-# read-only), but the probe tries every avenue so a world that leaves one open
-# is caught. Commands are run bare (no `|| true`, no trailing echo) so each
-# exec's own exit status tells us whether the hatch actually opened — masking it
-# would let the metadata claim a bypass that never happened. `label` names the
-# avenue for the metadata record.
+# blocked or irrelevant (interpreter missing, network egress denied, spawning
+# denied), but the probe tries every avenue so a world that leaves one open is
+# caught. The synchronous hatches run bare (no `|| true`, no trailing echo) so
+# each exec's own exit status tells us whether the hatch opened; the background
+# hatch is inherently async, so its exit status reports only that the shell
+# accepted the detached launch (the capability being probed), not that the
+# deferred write landed. It writes to its OWN marker path, never the primary
+# /app/state.json, so a late append can never corrupt the load-bearing state
+# and floor the probe for a shape reason instead of the intended one (the
+# single-defect principle). `label` names the avenue for the metadata record.
+_DEFERRED_TAMPER_PATH = "/app/output/quaver-deferred-tamper.txt"
 _ESCAPE_HATCHES = (
     ("interpreter-python", _PY_WRITE),
     ("interpreter-node", _NODE_WRITE),
@@ -54,7 +59,7 @@ _ESCAPE_HATCHES = (
     ("install-npm", "npm install --silent quaver-nonexistent-pkg"),
     (
         "background-subprocess",
-        "nohup bash -c 'sleep 1; echo \"tampered\" >> /app/state.json' "
+        f"nohup bash -c 'sleep 1; echo \"tampered\" >> {_DEFERRED_TAMPER_PATH}' "
         ">/dev/null 2>&1 &",
     ),
 )

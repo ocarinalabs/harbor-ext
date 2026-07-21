@@ -732,15 +732,26 @@ async def test_random_agent_drives_real_tools_then_writes_wrong_state(tmp_path: 
     assert "/app/state.json" in written
     issued = "\n".join(env.commands)
     # Generic driver: imports the world's tool library (no hardcoded tool names)
-    # and emits a real trajectory so coverage-only rubrics see genuine activity.
+    # and calls the real tool bodies so the HOST builds the trajectory from
+    # genuine activity — coverage-only rubrics then see real calls.
     assert "/app/tools-lib.ts" in issued
     assert "import * as tools" in issued
-    assert "/logs/agent/trajectory.json" in issued
-    assert "ATIF-v1.7" in issued
     # The final state it writes is deliberately NOT a completed outcome.
     state_cmd = _command_writing(env.commands, "/app/state.json")
     assert state_cmd is not None
     assert '"status": "in_progress"' in state_cmd
+
+
+async def test_random_agent_never_writes_the_host_owned_trajectory(tmp_path: Path):
+    # Same house rule as state_rewrite: the trajectory is host-built and the
+    # agent cannot forge it. A self-write would throw on a hardened world
+    # (read-only path) and leave forged coverage on a broken one — a vacuous
+    # floor either way. The probe only drives real tools; the host witnesses.
+    env = await _run(QuaverRandomAgent, tmp_path)
+    issued = "\n".join(env.commands)
+    assert "/logs/agent/trajectory.json" not in _redirect_targets(env.commands)
+    assert "writeFileSync" not in issued
+    assert "ATIF-v1.7" not in issued
 
 
 async def test_forbidden_subprocess_bypasses_tools_via_escape_hatches(tmp_path: Path):
@@ -757,6 +768,20 @@ async def test_forbidden_subprocess_bypasses_tools_via_escape_hatches(tmp_path: 
     # is nothing to back the state it wrote.
     assert "/app/tools-lib.ts" not in issued
     assert "/logs/agent/trajectory.json" not in issued
+
+
+async def test_forbidden_subprocess_background_hatch_spares_the_primary_state(
+    tmp_path: Path,
+):
+    # The detached background write must target its own marker path, never the
+    # load-bearing /app/state.json: a late append there would malform the JSON
+    # the interpreter hatch wrote and floor the probe for a shape reason (a
+    # second, incidental defect) instead of the intended one — no execution
+    # behind the state (single-defect principle).
+    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    background = next(cmd for cmd in env.commands if "nohup" in cmd)
+    assert ">> /app/state.json" not in background
+    assert "/app/output/quaver-deferred-tamper.txt" in background
 
 
 async def test_shortcut_hunter_reads_the_checkers_and_dumps_to_output(tmp_path: Path):
