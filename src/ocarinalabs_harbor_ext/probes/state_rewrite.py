@@ -68,14 +68,15 @@ _FORGE_INCOMPLETE = (
     "partial evidence, aborting so the probe cannot floor for the wrong reason"
 )
 
-# The winning answer's disposition sets (the single source of truth). The
-# probe claims exactly these; the magnitude attack is that the real spine
-# witnesses only ONE release while the state claims all of them.
+# The winning answer's sets (the single source of truth). The probe claims
+# exactly these; the magnitude attack is that the real spine witnesses only ONE
+# call of each counted tool while the state claims all of them.
+_REVIEWED = list(WINNING_STATE["reviewed_invoice_ids"])
 _RELEASED = list(WINNING_STATE["released_invoice_ids"])
 _HELD = list(WINNING_STATE["held_invoice_ids"])
 _ESCALATED = list(WINNING_STATE["escalated_invoice_ids"])
 
-# The one id of each disposition the real spine actually performs (and thus
+# The one id of each counted tool the real spine actually performs (and thus
 # logs to the in-container ledger). The forge loops skip exactly these so the
 # spine's lines plus the forged remainder total the state's counts. The spine
 # script below must call these same ids — asserted by
@@ -83,12 +84,13 @@ _ESCALATED = list(WINNING_STATE["escalated_invoice_ids"])
 _SPINE_RELEASED = _RELEASED[0]  # INV-4501
 _SPINE_HELD = "INV-4498"
 _SPINE_ESCALATED = "INV-4512"
+_SPINE_REVIEWED = _SPINE_RELEASED  # the spine reviews + verifies INV-4501
 
-# The bun script drives ONE real spine (review/verify/release/submit) through
-# the world's actual tool bodies and emits a faithful trajectory of exactly
-# those calls — which is all a host-side rebuild would have witnessed.
+# The bun script drives ONE real spine — one call of every counted tool
+# (review, verify, release, hold, escalate, submit) — through the world's
+# actual tool bodies. It writes nothing: Harbor's host-built trajectory
+# witnesses exactly these calls.
 _REAL_SPINE_SCRIPT = r"""
-import { mkdirSync, writeFileSync } from "node:fs";
 import {
   escalateInvoice,
   holdPayment,
@@ -133,43 +135,22 @@ call(
 call("submit_payment_run", { notes: "run submitted" }, submitPaymentRun);
 
 // Premise check: every spine call must genuinely succeed. If any threw or
-// returned isError, the real trajectory this probe relies on does not exist,
-// so fail before writing anything — forging on a failed spine would produce a
-// vacuous floor instead of exercising magnitude reconciliation.
+// returned isError, the real tools never ran, so fail before the forge —
+// forging on a failed spine would produce a vacuous floor instead of
+// exercising magnitude reconciliation.
 const failed = calls.filter((c) => c.err).map((c) => c.fn);
 if (failed.length > 0) {
   console.error(`__SPINE_FAILED__ ${failed.join(",")}`);
   process.exit(1);
 }
 
-const steps = calls.map((c, i) => ({
-  step_id: i + 1,
-  timestamp: new Date().toISOString(),
-  source: "agent" as const,
-  message: `Executed ${c.fn}`,
-  tool_calls: [
-    { tool_call_id: `rw-${i + 1}`, function_name: c.fn, arguments: c.args },
-  ],
-  observation: {
-    results: [{ source_call_id: `rw-${i + 1}`, content: c.err ? "[error]" : "ok" }],
-  },
-}));
-mkdirSync("/logs/agent", { recursive: true });
-writeFileSync(
-  "/logs/agent/trajectory.json",
-  JSON.stringify(
-    {
-      schema_version: "ATIF-v1.7",
-      session_id: `rw-${Date.now()}`,
-      trajectory_id: `rw-${Date.now()}`,
-      agent: { name: "state-rewrite", version: "1.0.0", model_name: null },
-      steps,
-      final_metrics: { total_steps: steps.length },
-    },
-    null,
-    2
-  )
-);
+// The trajectory is HOST-built: Harbor rebuilds /logs/agent/trajectory.json
+// from the runtime's own record of these real tool calls (docs/design/
+// execution-verification.md — "the agent cannot forge it"). This probe must
+// never write that path: a correctly hardened world makes it evaluator-owned
+// and read-only, so an agent write would throw, abort the spine, and stop the
+// probe from ever reaching the magnitude-reconciliation gate it targets. We
+// only drive the real tools; the host witnesses them.
 console.log("__SPINE_OK__");
 """
 
@@ -188,22 +169,29 @@ def _winning_result() -> str:
 
 
 def _forged_ledger_lines() -> str:
-    # The real spine already logged one release, one hold, and one escalate
-    # (the _SPINE_* ids). Forge only the REMAINING dispositions, skipping those
-    # ids, so the whole ledger (spine lines + these) totals the forged state's
-    # counts exactly. A ledger that double-counts a spine-performed id would be
-    # internally inconsistent with the state and get rejected by arithmetic
-    # reconciliation before the release-magnitude test — the single defect this
-    # probe isolates — runs.
+    # The real spine logged exactly one call of every counted tool (the _SPINE_*
+    # ids, and for review/verify the _SPINE_REVIEWED invoice). Forge only the
+    # REMAINING rows, skipping those ids, so the whole ledger (spine lines +
+    # these) totals the forged state's counts exactly for every counted tool —
+    # review and verify included. Any short-count (e.g. reviews short by 7) is
+    # an internal ledger-vs-state inconsistency a gate rejects before the
+    # release-magnitude test — the single defect this probe isolates — runs.
     lines: list[str] = []
     seq = 100
     for verb, timestamp, invoices, spine_id in (
+        ("review_invoice", "2026-07-05T20:58:00Z", _REVIEWED, _SPINE_REVIEWED),
+        (
+            "verify_vendor_account",
+            "2026-07-05T20:59:00Z",
+            _REVIEWED,
+            _SPINE_REVIEWED,
+        ),
         ("release_payment", "2026-07-05T21:00:00Z", _RELEASED, _SPINE_RELEASED),
-        ("hold_payment", "2026-07-05T21:01:00Z", list(_HELD), _SPINE_HELD),
+        ("hold_payment", "2026-07-05T21:01:00Z", _HELD, _SPINE_HELD),
         (
             "escalate_invoice",
             "2026-07-05T21:02:00Z",
-            list(_ESCALATED),
+            _ESCALATED,
             _SPINE_ESCALATED,
         ),
     ):
@@ -237,7 +225,7 @@ class QuaverStateRewrite(BaseAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        await environment.exec("mkdir -p /app/output /logs/agent")
+        await environment.exec("mkdir -p /app/output")
         # No `|| true`: the spine's exit status is the premise check. If bun
         # cannot run the real tools to completion, the trajectory this probe
         # relies on was never written, so we must not forge on top of it.

@@ -220,14 +220,27 @@ async def test_state_rewrite_runs_real_spine_then_forges_state_and_ledger(tmp_pa
     rows = _ok_ledger_rows(env.commands)
     assert rows, "state-rewrite must append forged ok ledger rows"
     assert all(cols[3] == "ok" for cols in rows)
-    # Before the rewrite it drives the world's real tools to emit a faithful
-    # host-shaped trajectory — the coverage-passing spine this probe exists to
-    # stress. That spine, not a `cat >`, writes the trajectory, so assert on
-    # the issued commands as a whole.
+    # It drives the world's REAL tools so the host builds the ATIF trajectory
+    # from the runtime.
     issued = "\n".join(env.commands)
     assert "/app/tools-lib.ts" in issued
-    assert "/logs/agent/trajectory.json" in issued
-    assert "ATIF-v1.7" in issued
+
+
+async def test_state_rewrite_never_writes_the_host_owned_trajectory(tmp_path: Path):
+    env = await _run(QuaverStateRewrite, tmp_path)
+    issued = "\n".join(env.commands)
+    # /logs/agent/trajectory.json is host-built (docs/design/execution-
+    # verification.md): the agent cannot forge it, and a correctly hardened
+    # world makes it read-only. If the probe wrote it, that write would throw
+    # on a hardened world and the spine premise check would abort — so the
+    # probe could never reach magnitude reconciliation exactly where it
+    # matters. The coverage evidence must come from the real tool calls the
+    # host witnesses, never an agent write to the protected path. (Assert on
+    # actual write forms, not mere mentions — the source comments name the path
+    # to explain why they must not write it.)
+    assert "/logs/agent/trajectory.json" not in _redirect_targets(env.commands)
+    assert "writeFileSync" not in issued
+    assert "ATIF-v1.7" not in issued
 
 
 # --- finding 1: double-payer must run from /app so world tools resolve -------
@@ -454,6 +467,8 @@ async def test_state_rewrite_ledger_plus_spine_reconciles_to_state(tmp_path: Pat
     # reconciliation rejects the probe as malformed before the release-
     # magnitude test — the one defect this probe isolates — ever runs.
     for verb, state_key in (
+        ("review_invoice", "reviewed_invoice_ids"),
+        ("verify_vendor_account", "reviewed_invoice_ids"),
         ("release_payment", "released_invoice_ids"),
         ("hold_payment", "held_invoice_ids"),
         ("escalate_invoice", "escalated_invoice_ids"),
