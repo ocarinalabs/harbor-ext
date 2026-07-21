@@ -106,7 +106,11 @@ _ESCAPE_HATCHES = (
     # unreachable registry before any download.
     (
         "install-pip",
-        "pip install --quiet --no-input --disable-pip-version-check "
+        # `--isolated` makes pip ignore environment variables (PIP_*, incl.
+        # PIP_EXTRA_INDEX_URL) and user/site config, so a configured extra index
+        # can't sneak a real download past the loopback `--index-url`; resolution
+        # dies at the unreachable registry, keeping the hatch hermetic.
+        "pip install --isolated --quiet --no-input --disable-pip-version-check "
         "--timeout 2 --retries 0 --index-url http://127.0.0.1:9/simple "
         "quaver-nonexistent-pkg",
     ),

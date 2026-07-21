@@ -885,6 +885,10 @@ async def test_forbidden_subprocess_installers_stay_off_public_registries(
     pip = next(c for c in env.commands if "pip install" in c)
     npm = next(c for c in env.commands if "npm install" in c)
     assert "--index-url http://127.0.0.1:9/simple" in pip
+    # --isolated makes pip ignore PIP_* env (incl. PIP_EXTRA_INDEX_URL) and user
+    # config, so a configured extra index can't sneak a real download past the
+    # loopback index-url.
+    assert "--isolated" in pip
     assert "--registry http://127.0.0.1:9/" in npm
     assert "--ignore-scripts" in npm
 
