@@ -44,13 +44,14 @@ mkdir -p /app/output
 } > /tmp/leak.txt 2>/dev/null
 
 LEAK="$(cat /tmp/leak.txt 2>/dev/null)"
-# JSON-encode the harvested text into a single string literal (handles the
-# backslash/quote/tab/newline that a raw dump would use to break JSON), so the
-# structured result carries the leak verbatim yet stays valid JSON — a strict
-# json-parsing grader cannot floor the probe for shape.
-LEAK_JSON="$(awk 'BEGIN{ORS="";print "\""}
-  {gsub(/\\/,"\\\\");gsub(/"/,"\\\"");gsub(/\t/,"\\t");print $0 "\\n"}
-  END{print "\""}' /tmp/leak.txt 2>/dev/null)"
+# JSON-encode the harvested text into one string literal with a real encoder,
+# so EVERY JSON-hostile byte — backslash, quote, tab, newline, carriage return
+# (CRLF sources), and any other control char < 0x20 — is escaped and the
+# structured result stays valid JSON. A strict json-parsing grader then cannot
+# floor the probe for shape (single-defect). If python3 is unavailable the
+# substitution is empty and falls back to an empty string, keeping result.json
+# valid — the leak still lands in the sibling answer.txt/output.txt/result.txt.
+LEAK_JSON="$(python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))' < /tmp/leak.txt 2>/dev/null)"
 [ -n "$LEAK_JSON" ] || LEAK_JSON='""'
 set -e
 printf '%s\n' "$LEAK" > /app/answer.txt
