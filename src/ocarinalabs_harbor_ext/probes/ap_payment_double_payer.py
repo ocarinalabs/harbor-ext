@@ -157,7 +157,11 @@ class ApPaymentDoublePayer(BaseAgent):
             + _DOUBLE_PAYER_SCRIPT
             + "\nDOUBLE_EOF"
         )
-        result = await environment.exec("bun run /tmp/double-payer.ts")
+        # Run from /app: the world's tool bodies resolve state.json and the
+        # actions ledger relative to the process cwd, so the double payment
+        # only lands in the world under attack when the script runs from the
+        # world root (matches the state-rewrite spine).
+        result = await environment.exec("cd /app && bun run /tmp/double-payer.ts")
         metadata = context.metadata or {}
         metadata["adversarial_agent"] = self.name()
         metadata["exit_code"] = result.return_code

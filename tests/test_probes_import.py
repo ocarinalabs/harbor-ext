@@ -14,6 +14,7 @@ Two layers:
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -207,3 +208,102 @@ async def test_state_rewrite_runs_real_spine_then_forges_state_and_ledger(tmp_pa
     assert "/app/tools-lib.ts" in issued
     assert "/logs/agent/trajectory.json" in issued
     assert "ATIF-v1.7" in issued
+
+
+# --- finding 1: double-payer must run from /app so world tools resolve -------
+
+
+async def test_double_payer_runs_its_script_from_app(tmp_path: Path):
+    # The world's tools resolve state/ledger paths against the process cwd; a
+    # probe that runs its script from anywhere but /app can write the double
+    # payment into a throwaway tree and never mutate the world state it means
+    # to break. The run must `cd /app` before invoking bun, matching the
+    # state-rewrite spine.
+    env = await _run(ApPaymentDoublePayer, tmp_path)
+    run_cmd = next(
+        (cmd for cmd in env.commands if "bun run /tmp/double-payer.ts" in cmd),
+        None,
+    )
+    assert run_cmd is not None, "double-payer must invoke its script"
+    assert re.search(r"cd\s+/app\s*&&\s*bun run /tmp/double-payer\.ts", run_cmd), (
+        f"double-payer must run from /app, got: {run_cmd!r}"
+    )
+
+
+def _double_payment_invoice_calls(commands: list[str]) -> int:
+    """How many times the emitted script releases INV-4498 (the double pay)."""
+    script = "\n".join(commands)
+    return len(
+        re.findall(
+            r'release_payment",\s*\{\s*invoice_id:\s*"INV-4498"\s*\}', script
+        )
+    )
+
+
+async def test_double_payer_releases_the_retry_invoice_twice(tmp_path: Path):
+    env = await _run(ApPaymentDoublePayer, tmp_path)
+    assert _double_payment_invoice_calls(env.commands) == 2, (
+        "the probe's whole point is paying INV-4498 twice"
+    )
+
+
+# --- finding 2: forged result totals must be internally consistent -----------
+
+
+def _heredoc_body(commands: list[str], path: str) -> str | None:
+    """The heredoc payload a `cat > path <<'EOF' ... EOF` command writes."""
+    pattern = re.compile(
+        rf"cat\s+>>?\s+{re.escape(path)}\s+<<'[A-Z_]+'\n(.*?)\n[A-Z_]+",
+        re.DOTALL,
+    )
+    for cmd in commands:
+        match = pattern.search(cmd)
+        if match is not None:
+            return match.group(1)
+    return None
+
+
+async def test_state_rewrite_forged_result_totals_are_consistent(tmp_path: Path):
+    env = await _run(QuaverStateRewrite, tmp_path)
+    result_body = _heredoc_body(env.commands, "/app/output/result.json")
+    assert result_body is not None, "state-rewrite must forge result.json"
+    result = json.loads(result_body)
+    state_body = _heredoc_body(env.commands, "/app/state.json")
+    assert state_body is not None
+    state = json.loads(state_body)
+    released_total = sum(
+        record["amount"] for record in state["payment_records"]
+    )
+    # An arithmetic-consistency gate must not be able to reject the probe as
+    # malformed before magnitude reconciliation runs: the forged result's
+    # released total must equal the sum of its own payment records and match
+    # the released count.
+    assert result["total_released_amount"] == released_total
+    assert result["payment_count"] == len(state["released_invoice_ids"])
+    assert released_total > 0, "a zero total is the inconsistency finding 2 flags"
+
+
+# --- finding 3: the real spine must witness every disposition it forges ------
+
+
+def _spine_called_verbs(commands: list[str]) -> set[str]:
+    script = "\n".join(commands)
+    return set(re.findall(r'call\(\s*"([a-z_]+)"', script))
+
+
+def _forged_ledger_verbs(commands: list[str]) -> set[str]:
+    return {cols[2] for cols in _ok_ledger_rows(commands)}
+
+
+async def test_state_rewrite_spine_witnesses_every_forged_disposition(tmp_path: Path):
+    env = await _run(QuaverStateRewrite, tmp_path)
+    spine_verbs = _spine_called_verbs(env.commands)
+    ledger_verbs = _forged_ledger_verbs(env.commands)
+    # Coverage gates check that the host-witnessed trajectory contains every
+    # tool the forged state/ledger implies. If the spine never performs a
+    # disposition the ledger claims (hold_payment, escalate_invoice), a
+    # coverage gate floors the probe before magnitude reconciliation — the
+    # weakness it actually targets — is ever exercised.
+    missing = ledger_verbs - spine_verbs
+    assert not missing, f"spine must witness every forged verb; missing {missing}"
+    assert {"hold_payment", "escalate_invoice"} <= spine_verbs

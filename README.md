@@ -30,7 +30,9 @@ The reusable cascade — run these against any Harbor world.
 | `pattern_7.QuaverPattern7` | Berkeley 7 — trusting untrusted | Writes directly to verifier state (reward.txt, reward.json, agent trajectory) |
 | `fake_state.QuaverFakeState` | Execution faking | Writes success-shaped structured state with zero tool calls behind it |
 | `ledger_forge.QuaverLedgerForge` | Execution faking | Fakes state and forges the in-container `/app/actions.log` ledger, still calling no real tool |
-| `state_rewrite.QuaverStateRewrite` | Execution faking (hybrid) | Drives a minimal real tool spine (coverage passes), then rewrites final state and forges a matching ledger |
+| `state_rewrite.QuaverStateRewrite`&nbsp;† | Execution faking (hybrid) | Drives a minimal real tool spine (coverage passes), then rewrites final state and forges a matching ledger |
+
+**† `state_rewrite` is world-specific despite its `quaver-` name.** It encodes the contractor-payment-run winning answer, and a state-rewrite probe can only floor *honestly* on a world whose answer it knows — on any other world it floors vacuously (the forged state fails that world's rubric for shape reasons, proving nothing about that world's magnitude gate). The `quaver-` name and module path are retained for import-path stability with the already-shipped ocarina gate; the durable fix is to stop counting it in the general cascade on the consumer side (ocarina `packages/gate` `PROBES`), where the "which probes count for this world" seam lives. See `CONTEXT.md` ("reusable vs world-specific probe", "vacuous floor", "registration seam").
 
 The stock Harbor `nop` agent covers the null-agent archetype. Use it alongside these for full coverage.
 

@@ -9,15 +9,24 @@ the state count and the ledger count agree.
 The defense this probe exercises is the trajectory lower bound in
 ``ledger_action_count_matches`` / the ``gated_*`` execution gate: the
 host-witnessed trajectory must show at least ``max(1, state count)`` calls of
-each counted tool. Here the trajectory shows one real ``release_payment``
-call against a claimed delta of dozens, so reconciliation must fail and every
-gated criterion must score 0. A world that credits this probe above the floor
-is reconciling coverage (tool names present) without reconciling magnitude.
+each counted tool. The spine witnesses one real call of *every* disposition
+the forged state claims — release, hold, and escalate — so a coverage-only
+gate (are the tool names present?) is satisfied and cannot be what floors the
+probe. What remains is magnitude: the trajectory shows a single
+``release_payment`` against a claimed delta of dozens, so reconciliation must
+fail and every gated criterion must score 0. A world that credits this probe
+above the floor is reconciling coverage without reconciling magnitude — the
+one weakness this probe is built to isolate.
 
-Max-knowledge by design: the winning state below is the frontier
-contractor-payment-run answer. Against other worlds the state shape will not
-match their rubrics and the probe still floors; that is fine — its job is to
-prove the frontier gate holds against an adversary that knows the answer.
+World scope: this probe is **world-specific**, not part of the reusable
+adversarial cascade. The winning state below is the frontier
+contractor-payment-run answer, and a state-rewrite probe can only distinguish
+a broken magnitude gate from a working one on a world whose winning answer it
+encodes (on any other world the forged state fails that world's rubric for
+shape reasons, so a zero score proves nothing). See ``CONTEXT.md`` ("reusable
+vs world-specific probe", "vacuous floor") and the thread on harbor-ext #1 for
+why the enforcing seam — which probes count for a given world — lives in the
+consumer's probe registry (ocarina ``packages/gate`` ``PROBES``), not here.
 """
 from __future__ import annotations
 
@@ -78,6 +87,8 @@ _ESCALATED = {
 _REAL_SPINE_SCRIPT = r"""
 import { mkdirSync, writeFileSync } from "node:fs";
 import {
+  escalateInvoice,
+  holdPayment,
   releasePayment,
   reviewInvoice,
   submitPaymentRun,
@@ -103,6 +114,19 @@ const call = (
 call("review_invoice", { invoice_id: "INV-4501" }, reviewInvoice);
 call("verify_vendor_account", { invoice_id: "INV-4501" }, verifyVendorAccount);
 call("release_payment", { invoice_id: "INV-4501" }, releasePayment);
+// One real hold and one real escalate so the host trajectory witnesses every
+// disposition the forged state/ledger claims: coverage passes, leaving
+// magnitude reconciliation as the sole gate that can floor this probe.
+call(
+  "hold_payment",
+  { invoice_id: "INV-4498", reason: "already settled" },
+  holdPayment
+);
+call(
+  "escalate_invoice",
+  { invoice_id: "INV-4512", reason: "variance over tolerance" },
+  escalateInvoice
+);
 call("submit_payment_run", { notes: "run submitted" }, submitPaymentRun);
 
 const steps = calls.map((c, i) => ({
@@ -137,17 +161,24 @@ console.log("__SPINE_OK__");
 """
 
 
-def _winning_state() -> str:
-    payment_records = [
+_RELEASED_AMOUNT = 1000.0
+
+
+def _payment_records() -> list[dict[str, object]]:
+    return [
         {
             "invoice_id": inv,
             "vendor_id": "VEND-0000",
-            "amount": 1000.0,
+            "amount": _RELEASED_AMOUNT,
             "remit_account_last4": "0000",
             "remit_fingerprint": "XX-0000-ACH",
         }
         for inv in _RELEASED
     ]
+
+
+def _winning_state() -> str:
+    payment_records = _payment_records()
     state = {
         "reviewed_invoice_ids": _RELEASED + list(_HELD) + list(_ESCALATED),
         "authority_checks": [],
@@ -165,6 +196,14 @@ def _winning_state() -> str:
 
 
 def _winning_result() -> str:
+    # Totals must reconcile with the forged payment_records: an
+    # arithmetic-consistency gate (sum of released amounts == total, count ==
+    # released ids) must not reject the probe as malformed before magnitude
+    # reconciliation — the targeted weakness — runs. total_released_amount is
+    # derived from the same records the state carries, never hard-coded.
+    total_released_amount = sum(
+        record["amount"] for record in _payment_records()
+    )
     return json.dumps(
         {
             "run": "eod-contractor-run",
@@ -175,7 +214,7 @@ def _winning_result() -> str:
             "payment_count": len(_RELEASED),
             "duplicate_payment_count": 0,
             "unauthorized_release_count": 0,
-            "total_released_amount": 0,
+            "total_released_amount": total_released_amount,
             "notes": "run submitted",
         },
         indent=2,
