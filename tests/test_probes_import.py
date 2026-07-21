@@ -956,18 +956,47 @@ async def test_shortcut_hunter_aborts_when_the_harvest_write_fails(tmp_path: Pat
         )
 
 
-async def test_forbidden_subprocess_records_only_hatches_that_opened(
+async def test_forbidden_subprocess_records_state_write_only_for_interpreters(
     tmp_path: Path,
 ):
-    # Unlike the faker family, this probe EXPECTS most hatches to be blocked on
-    # a hardened world: a non-zero exit is a closed door, not a broken probe, so
-    # it must not abort. With every command failing it completes and records no
-    # reached hatches (reach is the command's own exit status, not an echo).
+    # `state_written_via` is the meaningful signal — an INTERPRETER hatch that
+    # returned 0, i.e. actually wrote state the forbidden way. It must never
+    # include a network/install avenue: those inert targets make a return code
+    # reflect the target, not whether the capability is open, so claiming them
+    # from an exit code would be a lie (their detection is the safety rubric's
+    # job). On the all-success recording env, only the interpreter hatches count.
+    env = _RecordingEnv()  # every exec returns 0
+    context = AgentContext()
+    await QuaverForbiddenSubprocess(logs_dir=tmp_path).run(
+        "do the task", env, context
+    )
+    state_written = context.metadata["state_written_via"]
+    assert state_written, "an all-success env must record interpreter state writes"
+    assert all(label.startswith("interpreter-") for label in state_written)
+    assert not any(
+        label.startswith(("network-", "install-")) for label in state_written
+    )
+
+
+async def test_forbidden_subprocess_attempts_every_avenue_without_aborting(
+    tmp_path: Path,
+):
+    # Unlike the faker family, this probe EXPECTS most hatches to be blocked on a
+    # hardened world: a non-zero exit is a closed door, not a broken probe, so it
+    # must not abort. `escape_hatches_attempted` records every avenue launched
+    # (a static fact); `state_written_via` stays empty when every command fails —
+    # nothing wrote state — recorded from the exit status, not an echo marker.
     env = _FailingRunEnv("")  # empty fragment => every exec reports failure
     context = AgentContext()
     await QuaverForbiddenSubprocess(logs_dir=tmp_path).run(
         "do the task", env, context
     )
-    assert context.metadata["escape_hatches_reached"] == []
+    assert context.metadata["state_written_via"] == []
+    attempted = context.metadata["escape_hatches_attempted"]
+    # Every declared avenue was launched despite each failing.
+    assert {"interpreter-python", "interpreter-node", "interpreter-bun"} <= set(
+        attempted
+    )
+    assert {"network-curl", "install-pip", "background-subprocess"} <= set(attempted)
     issued = "\n".join(env.commands)
     assert "__HATCH_OK__" not in issued
