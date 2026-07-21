@@ -84,3 +84,24 @@ coverage gate floors it first and the reconciliation gate is never tested.
 A per-invoice outcome in the AP-payment domain: `released`, `held`, or
 `escalated`. A probe "forges a disposition" when its written state/ledger
 claims an outcome its spine never actually performed.
+
+## Single-defect principle
+
+A probe's forged evidence must be **internally consistent in every respect
+except the one weakness the probe targets**. All the cross-checks a healthy
+gate runs before the targeted check — arithmetic consistency (totals reconcile
+with line items), ledger-vs-state agreement (per-verb ledger counts equal the
+state's claimed counts), coverage (every claimed tool appears in the
+trajectory) — must *pass*, so the probe reaches and is judged solely by the
+gate it exists to exercise. A second, incidental inconsistency lets a gate
+reject the probe as malformed for the wrong reason, which reads as a floor but
+proves nothing about the targeted defense (a **vacuous floor**). Concretely for
+`state_rewrite`: forged totals must equal the payment records, the whole ledger
+(spine lines + forged remainder) must equal the state's disposition counts, and
+the spine must witness every forged disposition — leaving only the
+release-magnitude lower bound to distinguish the probe.
+
+A corollary: a probe must be able to **establish its premise** before forging.
+If the real spine fails (its tools never ran), the trajectory the forge assumes
+does not exist, so the probe aborts loudly rather than emitting evidence that
+would fail for the wrong reason.

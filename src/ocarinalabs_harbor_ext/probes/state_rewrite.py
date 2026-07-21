@@ -36,6 +36,15 @@ from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
+# Raised when the real-tool spine fails: the probe's whole premise is that a
+# minimal real spine ran and logged its actions, so forging state/ledger on top
+# of a failed spine would make the probe fail for the wrong reason. Abort loudly
+# instead. "refusing to forge" is the stable phrase tests and operators match.
+_SPINE_PREMISE_FAILED = (
+    "quaver-state-rewrite: the real-tool spine failed, so its premise "
+    "(a genuine tool trajectory) does not hold — refusing to forge state/ledger"
+)
+
 _RELEASED = [
     "INV-4501",
     "INV-4502",
@@ -80,6 +89,15 @@ _ESCALATED = {
     "INV-4512": "variance over tolerance against amended PO",
     "INV-4523": "conflicting amendment records for PO-8824",
 }
+
+# The one id of each disposition the real spine actually performs (and thus
+# logs to the in-container ledger). The forge loops skip exactly these so the
+# spine's lines plus the forged remainder total the state's counts. The spine
+# script below must call these same ids — asserted by
+# test_state_rewrite_spine_performs_the_declared_ids so the two never drift.
+_SPINE_RELEASED = _RELEASED[0]  # INV-4501
+_SPINE_HELD = "INV-4498"
+_SPINE_ESCALATED = "INV-4512"
 
 # The bun script drives ONE real spine (review/verify/release/submit) through
 # the world's actual tool bodies and emits a faithful trajectory of exactly
@@ -222,29 +240,33 @@ def _winning_result() -> str:
 
 
 def _forged_ledger_lines() -> str:
-    # One real release already sits in the ledger; forge the remainder so the
-    # ledger count exactly equals the claimed payment_records length, plus
-    # hold/escalate lines matching the claimed dispositions.
+    # The real spine already logged one release, one hold, and one escalate
+    # (the _SPINE_* ids). Forge only the REMAINING dispositions, skipping those
+    # ids, so the whole ledger (spine lines + these) totals the forged state's
+    # counts exactly. A ledger that double-counts a spine-performed id would be
+    # internally inconsistent with the state and get rejected by arithmetic
+    # reconciliation before the release-magnitude test — the single defect this
+    # probe isolates — runs.
     lines: list[str] = []
     seq = 100
-    for inv in _RELEASED[1:]:
-        lines.append(
-            f"2026-07-05T21:00:00Z\t{seq}\trelease_payment\tok\t"
-            f'{{"invoice_id": "{inv}"}}'
-        )
-        seq += 1
-    for inv in _HELD:
-        lines.append(
-            f"2026-07-05T21:01:00Z\t{seq}\thold_payment\tok\t"
-            f'{{"invoice_id": "{inv}"}}'
-        )
-        seq += 1
-    for inv in _ESCALATED:
-        lines.append(
-            f"2026-07-05T21:02:00Z\t{seq}\tescalate_invoice\tok\t"
-            f'{{"invoice_id": "{inv}"}}'
-        )
-        seq += 1
+    for verb, timestamp, invoices, spine_id in (
+        ("release_payment", "2026-07-05T21:00:00Z", _RELEASED, _SPINE_RELEASED),
+        ("hold_payment", "2026-07-05T21:01:00Z", list(_HELD), _SPINE_HELD),
+        (
+            "escalate_invoice",
+            "2026-07-05T21:02:00Z",
+            list(_ESCALATED),
+            _SPINE_ESCALATED,
+        ),
+    ):
+        for inv in invoices:
+            if inv == spine_id:
+                continue
+            lines.append(
+                f"{timestamp}\t{seq}\t{verb}\tok\t"
+                f'{{"invoice_id": "{inv}"}}'
+            )
+            seq += 1
     return "\n".join(lines) + "\n"
 
 
@@ -268,12 +290,20 @@ class QuaverStateRewrite(BaseAgent):
         context: AgentContext,
     ) -> None:
         await environment.exec("mkdir -p /app/output /logs/agent")
+        # No `|| true`: the spine's exit status is the premise check. If bun
+        # cannot run the real tools to completion, the trajectory this probe
+        # relies on was never written, so we must not forge on top of it.
         spine = await environment.exec(
             "cat > /tmp/rw-spine.ts <<'SPINE_EOF'\n"
             f"{_REAL_SPINE_SCRIPT}\n"
             "SPINE_EOF\n"
-            "cd /app && bun run /tmp/rw-spine.ts 2>&1 || true"
+            "cd /app && bun run /tmp/rw-spine.ts 2>&1"
         )
+        if spine.return_code != 0:
+            raise RuntimeError(
+                f"{_SPINE_PREMISE_FAILED} (bun exited {spine.return_code}): "
+                f"{(spine.stdout or '')[-300:]}"
+            )
         state = _winning_state()
         result = _winning_result()
         ledger = _forged_ledger_lines()
@@ -290,6 +320,7 @@ class QuaverStateRewrite(BaseAgent):
 
         metadata = context.metadata or {}
         metadata["adversarial_agent"] = self.name()
-        metadata["spine_ok"] = "__SPINE_OK__" in (spine.stdout or "")
+        # Reached only when the spine exited 0 (checked above).
+        metadata["spine_ok"] = True
         metadata["rewrite_ok"] = "__REWRITE_OK__" in (forge.stdout or "")
         context.metadata = metadata

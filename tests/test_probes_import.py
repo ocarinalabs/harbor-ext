@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -167,6 +168,25 @@ async def test_pattern_7_tampers_agent_trajectory_not_the_retired_path(tmp_path:
     trajectory_cmd = _command_writing(env.commands, "/logs/agent/trajectory.json")
     assert trajectory_cmd is not None
     assert "ATIF-v1.7" in trajectory_cmd
+    # The tamper must create the target's parent dir first: on an environment
+    # where Harbor has not pre-created /logs/agent, a bare `cat >` dies on "no
+    # such file" and the probe never tests the isolation boundary it exists for.
+    assert re.search(r"mkdir -p .*/logs/agent", trajectory_cmd), (
+        "pattern-7 must mkdir the trajectory parent before writing"
+    )
+
+
+async def test_pattern_7_creates_every_tamper_target_parent_dir(tmp_path: Path):
+    env = await _run(QuaverPattern7, tmp_path)
+    for path in (
+        "/logs/verifier/reward.txt",
+        "/logs/verifier/reward.json",
+        "/logs/agent/trajectory.json",
+        "/tests/test.sh",
+    ):
+        cmd = _command_writing(env.commands, path)
+        assert cmd is not None, f"pattern-7 must attempt {path}"
+        assert "mkdir -p" in cmd, f"pattern-7 must mkdir the parent of {path}"
 
 
 async def test_fake_state_writes_success_state_with_no_tool_calls(tmp_path: Path):
@@ -307,3 +327,80 @@ async def test_state_rewrite_spine_witnesses_every_forged_disposition(tmp_path: 
     missing = ledger_verbs - spine_verbs
     assert not missing, f"spine must witness every forged verb; missing {missing}"
     assert {"hold_payment", "escalate_invoice"} <= spine_verbs
+
+
+def _spine_call_counts(commands: list[str]) -> Counter[str]:
+    script = "\n".join(commands)
+    return Counter(re.findall(r'call\(\s*"([a-z_]+)"', script))
+
+
+def _forged_ledger_counts(commands: list[str]) -> Counter[str]:
+    return Counter(cols[2] for cols in _ok_ledger_rows(commands))
+
+
+async def test_state_rewrite_ledger_plus_spine_reconciles_to_state(tmp_path: Path):
+    env = await _run(QuaverStateRewrite, tmp_path)
+    state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
+    forged = _forged_ledger_counts(env.commands)
+    spine = _spine_call_counts(env.commands)
+    # Single-defect invariant: the in-container ledger (the spine's real lines
+    # plus the forged remainder) must total the forged state's per-disposition
+    # counts exactly. If they disagree, arithmetic ledger-vs-state
+    # reconciliation rejects the probe as malformed before the release-
+    # magnitude test — the one defect this probe isolates — ever runs.
+    for verb, state_key in (
+        ("release_payment", "released_invoice_ids"),
+        ("hold_payment", "held_invoice_ids"),
+        ("escalate_invoice", "escalated_invoice_ids"),
+    ):
+        assert forged[verb] + spine[verb] == len(state[state_key]), (
+            f"{verb}: forged {forged[verb]} + spine {spine[verb]} "
+            f"!= state {len(state[state_key])}"
+        )
+
+
+async def test_state_rewrite_spine_performs_the_declared_ids(tmp_path: Path):
+    # The forge loops skip the spine-performed ids by value; if the spine
+    # script drifts to different ids the ledger reconciliation silently breaks,
+    # so pin the spine's release/hold/escalate ids to the module constants.
+    from ocarinalabs_harbor_ext.probes import state_rewrite as sr
+
+    env = await _run(QuaverStateRewrite, tmp_path)
+    script = "\n".join(env.commands)
+
+    def _called_id(verb: str) -> str | None:
+        match = re.search(
+            rf'call\(\s*"{verb}",\s*\{{\s*invoice_id:\s*"([A-Z0-9-]+)"', script
+        )
+        return match.group(1) if match else None
+
+    assert _called_id("release_payment") == sr._SPINE_RELEASED
+    assert _called_id("hold_payment") == sr._SPINE_HELD
+    assert _called_id("escalate_invoice") == sr._SPINE_ESCALATED
+
+
+class _FailingSpineEnv(_RecordingEnv):
+    """Records commands but reports the spine's bun run as a hard failure."""
+
+    async def exec(self, command: str, *_args, **_kwargs) -> ExecResult:
+        self.commands.append(command)
+        if "bun run /tmp/rw-spine.ts" in command:
+            return ExecResult(
+                return_code=1,
+                stdout="error: Cannot find module '/app/tools-lib.ts'",
+            )
+        return ExecResult(return_code=0, stdout="")
+
+
+async def test_state_rewrite_aborts_loudly_when_spine_fails(tmp_path: Path):
+    env = _FailingSpineEnv()
+    # A probe that cannot establish its real-tool premise must not proceed to
+    # forge: a forged ledger that assumes the spine's release landed would make
+    # the probe fail for the wrong reason. It aborts loudly instead.
+    with pytest.raises(RuntimeError, match="refusing to forge"):
+        await QuaverStateRewrite(logs_dir=tmp_path).run(
+            "do the task", env, AgentContext()
+        )
+    assert not any("/app/state.json" in cmd for cmd in env.commands), (
+        "no state must be forged once the spine premise fails"
+    )
