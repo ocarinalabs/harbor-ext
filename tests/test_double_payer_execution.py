@@ -13,7 +13,6 @@ Skipped when ``bun`` is unavailable; the harness world tools are TypeScript.
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -69,17 +68,34 @@ export const releasePayment = (a: { invoice_id: string }): ToolResult => {
 """
 
 
-def _write_world(root: Path) -> None:
+# A releasePayment that always throws, to model a world that signals rejection
+# by raising rather than returning {isError: true}.
+_THROWING_RELEASE_TOOLS = _STUB_TOOLS_LIB.replace(
+    "export const releasePayment = (a: { invoice_id: string }): ToolResult => {",
+    "export const releasePayment = (_a: { invoice_id: string }): ToolResult => {\n"
+    '  throw new Error("world rejects this release");',
+).replace(
+    "  const s = load();\n"
+    "  if (s.released.includes(a.invoice_id)) {\n"
+    "    s.duplicate_payment_count += 1;\n"
+    "  }\n"
+    "  s.released.push(a.invoice_id);\n"
+    "  save(s);\n"
+    "  return {};\n"
+    "};",
+    "  return {};\n};",
+)
+
+
+def _write_world(root: Path, tools_lib: str = _STUB_TOOLS_LIB) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    (root / "tools-lib.ts").write_text(_STUB_TOOLS_LIB)
-    (root / "logs" / "agent").mkdir(parents=True, exist_ok=True)
-    # The probe imports "/app/tools-lib.ts" absolutely and writes the
-    # trajectory under /logs; point both at this sandbox so the script runs
-    # without a container while still resolving state against its own cwd.
+    (root / "tools-lib.ts").write_text(tools_lib)
+    # The probe imports "/app/tools-lib.ts" absolutely; point it at this sandbox
+    # so the script runs without a container while still resolving state against
+    # its own cwd. The script writes no trajectory, so no /logs rewrite needed.
     script = _DOUBLE_PAYER_SCRIPT.replace(
         "/app/tools-lib.ts", str(root / "tools-lib.ts")
-    ).replace("/logs/agent/trajectory.json", str(root / "logs/agent/trajectory.json"))
-    script = re.sub(r'mkdirSync\("[^"]*/logs/agent"', f'mkdirSync("{root}/logs/agent"', script)
+    )
     (root / "double-payer.ts").write_text(script)
 
 
@@ -96,6 +112,23 @@ def test_double_payment_lands_when_run_from_the_world_root(tmp_path: Path) -> No
     state = json.loads((world / "state.json").read_text())
     assert state["duplicate_payment_count"] == 1
     assert state["released"].count("INV-4498") == 2
+
+
+def test_double_payer_survives_a_tool_that_throws(tmp_path: Path) -> None:
+    world = tmp_path / "app"
+    _write_world(world, tools_lib=_THROWING_RELEASE_TOOLS)
+    # A world that rejects the (duplicate) release by throwing must not crash
+    # the probe: the rejection is the idempotency signal the gate evaluates, not
+    # an infra failure. The script wraps every call, so bun still exits 0.
+    result = subprocess.run(
+        ["bun", "run", str(world / "double-payer.ts")],
+        cwd=world,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"a throwing tool must not abort the probe; stderr: {result.stderr}"
+    )
 
 
 def test_double_payment_misses_the_world_state_when_run_elsewhere(tmp_path: Path) -> None:

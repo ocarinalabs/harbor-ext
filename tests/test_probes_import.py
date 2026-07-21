@@ -325,6 +325,28 @@ async def test_double_payer_releases_the_retry_invoice_twice(tmp_path: Path):
     )
 
 
+async def test_double_payer_hold_escalate_reasons_match_oracle(tmp_path: Path):
+    # The double-payer follows the winning flow except for its single defect
+    # (paying INV-4498, which the oracle holds, twice). holdPayment/escalate
+    # persist the reason into state, so the reasons must match the oracle or a
+    # rubric validating them floors the probe before the duplicate-payment gate.
+    from ocarinalabs_harbor_ext.probes._contractor_payment_run import WINNING_STATE
+
+    env = await _run(ApPaymentDoublePayer, tmp_path)
+    script = "\n".join(env.commands)
+    for inv in ("INV-4508", "INV-4509"):
+        match = re.search(
+            rf'invoice_id:\s*"{inv}",\s*reason:\s*"([^"]+)"', script
+        )
+        assert match is not None, f"double-payer must hold {inv} with a reason"
+        assert match.group(1) == WINNING_STATE["hold_reasons"][inv]
+    escalate = re.search(
+        r'invoice_id:\s*"INV-4512",\s*reason:\s*"([^"]+)"', script
+    )
+    assert escalate is not None
+    assert escalate.group(1) == WINNING_STATE["escalation_reasons"]["INV-4512"]
+
+
 class _FailingRunEnv(_RecordingEnv):
     """Records commands but reports a given substring's command as failed."""
 
