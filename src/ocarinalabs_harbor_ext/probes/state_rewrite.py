@@ -75,6 +75,8 @@ _REVIEWED = list(WINNING_STATE["reviewed_invoice_ids"])
 _RELEASED = list(WINNING_STATE["released_invoice_ids"])
 _HELD = list(WINNING_STATE["held_invoice_ids"])
 _ESCALATED = list(WINNING_STATE["escalated_invoice_ids"])
+_HOLD_REASONS: dict[str, str] = dict(WINNING_STATE["hold_reasons"])
+_ESCALATION_REASONS: dict[str, str] = dict(WINNING_STATE["escalation_reasons"])
 
 # The one id of each counted tool the real spine actually performs (and thus
 # logs to the in-container ledger). The forge loops skip exactly these so the
@@ -168,6 +170,18 @@ def _winning_result() -> str:
     return json.dumps(WINNING_RESULT, indent=2)
 
 
+def _ledger_args(verb: str, inv: str) -> str:
+    # The forged args must match what the real tool call logged: hold and
+    # escalate carry a reason (the tool is invoked with one), release/review/
+    # verify carry only the invoice id. A ledger-arg validator reconciling hold
+    # reasons would reject a reason-less hold row before magnitude runs.
+    if verb == "hold_payment":
+        return f'{{"invoice_id": "{inv}", "reason": "{_HOLD_REASONS[inv]}"}}'
+    if verb == "escalate_invoice":
+        return f'{{"invoice_id": "{inv}", "reason": "{_ESCALATION_REASONS[inv]}"}}'
+    return f'{{"invoice_id": "{inv}"}}'
+
+
 def _forged_ledger_lines() -> str:
     # The real spine logged exactly one call of every counted tool (the _SPINE_*
     # ids, and for review/verify the _SPINE_REVIEWED invoice). Forge only the
@@ -199,8 +213,7 @@ def _forged_ledger_lines() -> str:
             if inv == spine_id:
                 continue
             lines.append(
-                f"{timestamp}\t{seq}\t{verb}\tok\t"
-                f'{{"invoice_id": "{inv}"}}'
+                f"{timestamp}\t{seq}\t{verb}\tok\t{_ledger_args(verb, inv)}"
             )
             seq += 1
     return "\n".join(lines) + "\n"

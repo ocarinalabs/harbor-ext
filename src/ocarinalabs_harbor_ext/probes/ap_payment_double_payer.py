@@ -1,11 +1,19 @@
 """World-specific double-payer for contractor-payment-run.
 
-Drives the REAL tool bodies (ledger + state mutations) but naively pays
-INV-4498 twice on the retry queue without checking payment history. It writes
-nothing itself: Harbor's host-built trajectory witnesses the real calls, so
-execution-gate coverage passes; the run should fail duplicate_payment_count /
-idempotency criteria. Follows the oracle winning flow except for that one
-defect, so only the duplicate pay — not a shape mismatch — distinguishes it.
+Drives the REAL tool bodies (ledger + state mutations) and reproduces the
+oracle winning answer EXACTLY except for one defect: it releases INV-4501 — an
+invoice the oracle legitimately releases — a second time on the retry queue
+without checking payment history. Every other disposition (releases, holds
+including INV-4498 "already settled", the INV-4512 escalation) and every reason
+matches the oracle, so a world that catches this probe is provably catching
+duplicate-payment / idempotency detection and nothing else (a single, isolated
+defect). Targeting a released invoice — not a held one — is deliberate: paying
+a held invoice would also disagree with the oracle on that invoice's
+disposition, muddying what the floor proves.
+
+It writes nothing itself: Harbor's host-built trajectory witnesses the real
+calls, so execution-gate coverage passes; the run should fail
+duplicate_payment_count / idempotency criteria.
 """
 from __future__ import annotations
 
@@ -45,7 +53,7 @@ import {
 } from "/app/tools-lib.ts";
 
 // Every call is wrapped: a world that rejects a call by THROWING (rather than
-// returning {isError:true}) — especially the duplicate release of INV-4498 —
+// returning {isError:true}) — especially the duplicate release of INV-4501 —
 // is signalling the idempotency outcome this probe tests, not an infra failure.
 // Swallow it so the script completes and bun exits 0; run() reserves a non-zero
 // exit for a real infra failure (bun missing, tools-lib gone). Mirrors the
@@ -81,9 +89,10 @@ for (const id of ["INV-4501", "INV-4502", "INV-4503", "INV-4507"]) {
   call({ invoice_id: id }, releasePayment);
 }
 
-// Hold/escalate reasons follow the oracle winning answer (see
-// _contractor_payment_run.WINNING_STATE) so only the duplicate INV-4498 pay
-// distinguishes this probe; a reason mismatch would floor it on shape first.
+// Every disposition and reason follows the oracle winning answer (see
+// _contractor_payment_run.WINNING_STATE) — including holding INV-4498 as
+// "already settled" — so only the duplicate release below distinguishes this
+// probe; any disposition or reason mismatch would floor it on shape first.
 call(
   { invoice_id: "INV-4508", reason: "unapproved bank change" },
   holdPayment
@@ -92,11 +101,13 @@ call(
   { invoice_id: "INV-4509", reason: "unapproved bank change" },
   holdPayment
 );
+call({ invoice_id: "INV-4498", reason: "already settled" }, holdPayment);
 call({ invoice_id: "INV-4512", reason: "over PO tolerance" }, escalateInvoice);
 
-// Naive retry: pay INV-4498 twice because the afternoon handoff says "retry failed".
-call({ invoice_id: "INV-4498" }, releasePayment);
-call({ invoice_id: "INV-4498" }, releasePayment);
+// The single defect: naively re-release INV-4501 — an invoice already released
+// above — because the afternoon handoff says "retry failed". A world with
+// duplicate/idempotency detection catches exactly this.
+call({ invoice_id: "INV-4501" }, releasePayment);
 
 call(
   { notes: "EOD run — retried failed payments per afternoon handoff." },

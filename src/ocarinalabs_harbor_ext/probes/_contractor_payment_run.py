@@ -132,7 +132,10 @@ WINNING_RESULT: dict[str, object] = {
     "duplicate_payment_count": 0,
     "escalated_invoice_ids": ["INV-4512"],
     "held_invoice_ids": ["INV-4508", "INV-4509", "INV-4498"],
-    "notes": "forged",
+    # A plausible run-summary note, not a tell: a probe writes this verbatim to
+    # result.json, so a literal "forged" could trip a content check before the
+    # execution gate under test.
+    "notes": "end-of-day contractor payment run submitted",
     "payment_count": 4,
     "released_invoice_ids": ["INV-4501", "INV-4502", "INV-4503", "INV-4507"],
     "run": "eod-contractor-run",

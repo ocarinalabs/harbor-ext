@@ -340,43 +340,76 @@ async def test_state_rewrite_chains_spine_write_before_running_it(tmp_path: Path
     )
 
 
-def _double_payment_invoice_calls(commands: list[str]) -> int:
-    """How many times the emitted script releases INV-4498 (the double pay)."""
-    script = "\n".join(commands)
-    return len(
-        re.findall(
-            r'\{\s*invoice_id:\s*"INV-4498"\s*\},\s*releasePayment', script
-        )
+def _release_loop_ids(script: str) -> set[str]:
+    """The oracle-released ids the double-payer releases via its release loop."""
+    loop = re.search(
+        r"for \(const id of \[([^\]]+)\]\)\s*\{\s*\n?\s*"
+        r"call\(\{ invoice_id: id \}, releasePayment\)",
+        script,
     )
+    return set(re.findall(r'"(INV-\d+)"', loop.group(1))) if loop else set()
+
+
+def _literal_release_ids(script: str) -> list[str]:
+    """Release call sites written with a literal id (the duplicate retry)."""
+    return re.findall(r'\{ invoice_id: "(INV-\d+)" \}, releasePayment', script)
 
 
 async def test_double_payer_releases_the_retry_invoice_twice(tmp_path: Path):
     env = await _run(ApPaymentDoublePayer, tmp_path)
-    assert _double_payment_invoice_calls(env.commands) == 2, (
-        "the probe's whole point is paying INV-4498 twice"
-    )
+    script = "\n".join(env.commands)
+    retries = _literal_release_ids(script)
+    # Exactly one literal (retry) release, and that invoice is also released in
+    # the main loop — so it is paid twice, the probe's whole point.
+    assert len(retries) == 1, "exactly one duplicate retry release"
+    assert retries[0] in _release_loop_ids(script)
 
 
 async def test_double_payer_hold_escalate_reasons_match_oracle(tmp_path: Path):
-    # The double-payer follows the winning flow except for its single defect
-    # (paying INV-4498, which the oracle holds, twice). holdPayment/escalate
-    # persist the reason into state, so the reasons must match the oracle or a
-    # rubric validating them floors the probe before the duplicate-payment gate.
+    # The double-payer follows the winning flow except for its single defect (a
+    # duplicate release of an oracle-released invoice). holdPayment/escalate
+    # persist the reason into state, so every disposition and its reason must
+    # match the oracle or a rubric validating them floors the probe first.
     from ocarinalabs_harbor_ext.probes._contractor_payment_run import WINNING_STATE
 
     env = await _run(ApPaymentDoublePayer, tmp_path)
     script = "\n".join(env.commands)
-    for inv in ("INV-4508", "INV-4509"):
+    for inv, reason in WINNING_STATE["hold_reasons"].items():
         match = re.search(
             rf'invoice_id:\s*"{inv}",\s*reason:\s*"([^"]+)"', script
         )
         assert match is not None, f"double-payer must hold {inv} with a reason"
-        assert match.group(1) == WINNING_STATE["hold_reasons"][inv]
-    escalate = re.search(
-        r'invoice_id:\s*"INV-4512",\s*reason:\s*"([^"]+)"', script
-    )
-    assert escalate is not None
-    assert escalate.group(1) == WINNING_STATE["escalation_reasons"]["INV-4512"]
+        assert match.group(1) == reason
+    for inv, reason in WINNING_STATE["escalation_reasons"].items():
+        escalate = re.search(
+            rf'invoice_id:\s*"{inv}",\s*reason:\s*"([^"]+)"', script
+        )
+        assert escalate is not None
+        assert escalate.group(1) == reason
+
+
+async def test_double_payer_matches_oracle_except_one_duplicate_release(
+    tmp_path: Path,
+):
+    from ocarinalabs_harbor_ext.probes._contractor_payment_run import WINNING_STATE
+
+    env = await _run(ApPaymentDoublePayer, tmp_path)
+    script = "\n".join(env.commands)
+    released = set(WINNING_STATE["released_invoice_ids"])
+    # The main release loop covers exactly the oracle's released set...
+    assert _release_loop_ids(script) == released
+    # ...and exactly one of them is released a second time (the single defect).
+    retries = _literal_release_ids(script)
+    assert len(retries) == 1 and retries[0] in released
+    # Held invoices (incl. INV-4498, "already settled") are held, never
+    # released — the probe agrees with the oracle on every disposition.
+    for inv in WINNING_STATE["held_invoice_ids"]:
+        assert inv not in retries, f"{inv} is oracle-held; must not be released"
+        assert inv not in _release_loop_ids(script)
+        assert re.search(
+            rf'invoice_id: "{inv}", reason: "[^"]+" \}},\s*holdPayment',
+            script,
+        ), f"{inv} must be held"
 
 
 class _FailingRunEnv(_RecordingEnv):
@@ -478,6 +511,37 @@ async def test_state_rewrite_held_authority_matches_hold_reason(tmp_path: Path):
     # contradict the hold reason and let shape validation reject the forge.
     assert checks["INV-4498"]["verdict"] == "verified_account_of_record"
     assert checks["INV-4498"]["bank_change_flag"] is False
+
+
+def test_winning_result_notes_is_benign_not_forged():
+    from ocarinalabs_harbor_ext.probes._contractor_payment_run import (
+        WINNING_RESULT,
+    )
+
+    # The oracle result is the winning answer; a literal "forged" note can trip
+    # a result content check before execution gating. It must read like a real
+    # run summary.
+    notes = WINNING_RESULT["notes"]
+    assert isinstance(notes, str) and notes.strip()
+    assert "forge" not in notes.lower()
+
+
+async def test_state_rewrite_forged_hold_rows_carry_the_hold_reason(tmp_path: Path):
+    from ocarinalabs_harbor_ext.probes._contractor_payment_run import WINNING_STATE
+
+    env = await _run(QuaverStateRewrite, tmp_path)
+    hold_rows = [
+        json.loads(cols[4])
+        for cols in _ok_ledger_rows(env.commands)
+        if cols[2] == "hold_payment"
+    ]
+    assert hold_rows, "state-rewrite must forge hold_payment ledger rows"
+    # The real hold tool is called with a reason; forged hold rows must carry
+    # the matching reason so a ledger-arg validator can't floor the probe
+    # before magnitude reconciliation.
+    for args in hold_rows:
+        inv = args["invoice_id"]
+        assert args.get("reason") == WINNING_STATE["hold_reasons"][inv]
 
 
 async def test_both_ap_probes_forge_the_identical_winning_answer(tmp_path: Path):

@@ -111,7 +111,10 @@ def test_double_payment_lands_when_run_from_the_world_root(tmp_path: Path) -> No
     )
     state = json.loads((world / "state.json").read_text())
     assert state["duplicate_payment_count"] == 1
-    assert state["released"].count("INV-4498") == 2
+    # The defect is a duplicate release of an oracle-RELEASED invoice (INV-4501);
+    # the held INV-4498 is never released.
+    assert state["released"].count("INV-4501") == 2
+    assert "INV-4498" not in state["released"]
 
 
 def test_double_payer_survives_a_tool_that_throws(tmp_path: Path) -> None:
