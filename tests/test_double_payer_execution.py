@@ -76,6 +76,14 @@ _THROWING_REVIEW_TOOLS = _STUB_TOOLS_LIB.replace(
     '  throw new Error("world state not initialized");\n};',
 )
 
+# A world whose reviewInvoice signals failure by VALUE ({isError:true}) rather
+# than throwing: still a setup failure on the oracle path, which must abort.
+_ISERROR_REVIEW_TOOLS = _STUB_TOOLS_LIB.replace(
+    "export const reviewInvoice = (_a: { invoice_id: string }): ToolResult => ({});",
+    "export const reviewInvoice = (_a: { invoice_id: string }): ToolResult => "
+    "({ isError: true });",
+)
+
 # A world that rejects a DUPLICATE release by throwing (already-released id),
 # while first-time releases succeed. This is the one expected rejection the
 # probe must tolerate — its idempotency signal.
@@ -142,6 +150,23 @@ def test_double_payer_setup_failure_aborts_the_script(tmp_path: Path) -> None:
     )
     assert result.returncode != 0, (
         f"a setup-path throw must abort the probe; stderr: {result.stderr}"
+    )
+
+
+def test_double_payer_setup_iserror_return_aborts_the_script(tmp_path: Path) -> None:
+    world = tmp_path / "app"
+    _write_world(world, tools_lib=_ISERROR_REVIEW_TOOLS)
+    # An oracle-path tool that signals failure by VALUE ({isError:true}) rather
+    # than by throwing is still a setup failure: `step` must treat it as one, so
+    # bun exits non-zero and run() aborts — symmetric with throw propagation.
+    result = subprocess.run(
+        ["bun", "run", str(world / "double-payer.ts")],
+        cwd=world,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0, (
+        f"an oracle-path isError return must abort the probe; stderr: {result.stderr}"
     )
 
 

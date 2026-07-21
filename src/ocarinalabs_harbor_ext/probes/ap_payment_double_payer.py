@@ -52,14 +52,22 @@ import {
   type ToolResult,
 } from "/app/tools-lib.ts";
 
-// The oracle-path steps run WITHOUT swallowing: if any throws, it is a genuine
-// setup failure (fixture drift, uninitialized AP state), the winning-flow
-// premise never held, and it must propagate so bun exits non-zero and run()
-// aborts loudly rather than reporting a vacuous floor.
+// The oracle-path steps run WITHOUT swallowing: a failure by EITHER mode — a
+// thrown error or an {isError:true} return — is a genuine setup failure
+// (fixture drift, uninitialized AP state), so the winning-flow premise never
+// held and it must propagate. A throw propagates on its own; an isError return
+// is re-thrown here. Either way bun exits non-zero and run() aborts loudly
+// rather than reporting a vacuous floor. Symmetric with the state-rewrite spine.
 const step = <T extends Record<string, unknown>>(
   args: T,
   fn: (a: T) => ToolResult
-): ToolResult => fn(args);
+): ToolResult => {
+  const result = fn(args);
+  if (result.isError === true) {
+    throw new Error(`oracle-path call failed: ${JSON.stringify(args)}`);
+  }
+  return result;
+};
 
 // ONLY the final duplicate release tolerates a throw: a world that rejects the
 // duplicate by throwing (rather than returning {isError:true}) is signalling
