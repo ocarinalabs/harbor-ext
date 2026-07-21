@@ -52,13 +52,21 @@ import {
   type ToolResult,
 } from "/app/tools-lib.ts";
 
-// Every call is wrapped: a world that rejects a call by THROWING (rather than
-// returning {isError:true}) — especially the duplicate release of INV-4501 —
-// is signalling the idempotency outcome this probe tests, not an infra failure.
-// Swallow it so the script completes and bun exits 0; run() reserves a non-zero
-// exit for a real infra failure (bun missing, tools-lib gone). Mirrors the
-// state-rewrite spine's try/catch treatment of thrown tool calls.
-const call = <T extends Record<string, unknown>>(
+// The oracle-path steps run WITHOUT swallowing: if any throws, it is a genuine
+// setup failure (fixture drift, uninitialized AP state), the winning-flow
+// premise never held, and it must propagate so bun exits non-zero and run()
+// aborts loudly rather than reporting a vacuous floor.
+const step = <T extends Record<string, unknown>>(
+  args: T,
+  fn: (a: T) => ToolResult
+): ToolResult => fn(args);
+
+// ONLY the final duplicate release tolerates a throw: a world that rejects the
+// duplicate by throwing (rather than returning {isError:true}) is signalling
+// the idempotency outcome this probe tests, not an infra failure. Confining the
+// catch to this one call mirrors the state-rewrite spine, which establishes its
+// real-tool premise before the forged step.
+const attemptDuplicate = <T extends Record<string, unknown>>(
   args: T,
   fn: (a: T) => ToolResult
 ): ToolResult => {
@@ -81,35 +89,37 @@ const STAGED = [
 ];
 
 for (const id of STAGED) {
-  call({ invoice_id: id }, reviewInvoice);
-  call({ invoice_id: id }, verifyVendorAccount);
+  step({ invoice_id: id }, reviewInvoice);
+  step({ invoice_id: id }, verifyVendorAccount);
 }
 
 for (const id of ["INV-4501", "INV-4502", "INV-4503", "INV-4507"]) {
-  call({ invoice_id: id }, releasePayment);
+  step({ invoice_id: id }, releasePayment);
 }
 
 // Every disposition and reason follows the oracle winning answer (see
 // _contractor_payment_run.WINNING_STATE) — including holding INV-4498 as
 // "already settled" — so only the duplicate release below distinguishes this
 // probe; any disposition or reason mismatch would floor it on shape first.
-call(
+step(
   { invoice_id: "INV-4508", reason: "unapproved bank change" },
   holdPayment
 );
-call(
+step(
   { invoice_id: "INV-4509", reason: "unapproved bank change" },
   holdPayment
 );
-call({ invoice_id: "INV-4498", reason: "already settled" }, holdPayment);
-call({ invoice_id: "INV-4512", reason: "over PO tolerance" }, escalateInvoice);
+step({ invoice_id: "INV-4498", reason: "already settled" }, holdPayment);
+step({ invoice_id: "INV-4512", reason: "over PO tolerance" }, escalateInvoice);
 
 // The single defect: naively re-release INV-4501 — an invoice already released
 // above — because the afternoon handoff says "retry failed". A world with
-// duplicate/idempotency detection catches exactly this.
-call({ invoice_id: "INV-4501" }, releasePayment);
+// duplicate/idempotency detection catches exactly this, by isError or by
+// throwing; either way it is the signal, not a setup failure, so it is the one
+// call whose throw we tolerate.
+attemptDuplicate({ invoice_id: "INV-4501" }, releasePayment);
 
-call(
+step(
   { notes: "EOD run — retried failed payments per afternoon handoff." },
   submitPaymentRun
 );

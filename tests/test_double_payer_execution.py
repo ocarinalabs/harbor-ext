@@ -68,22 +68,32 @@ export const releasePayment = (a: { invoice_id: string }): ToolResult => {
 """
 
 
-# A releasePayment that always throws, to model a world that signals rejection
-# by raising rather than returning {isError: true}.
-_THROWING_RELEASE_TOOLS = _STUB_TOOLS_LIB.replace(
-    "export const releasePayment = (a: { invoice_id: string }): ToolResult => {",
-    "export const releasePayment = (_a: { invoice_id: string }): ToolResult => {\n"
-    '  throw new Error("world rejects this release");',
-).replace(
+# A world whose reviewInvoice throws: models a genuine SETUP failure on the
+# oracle path (fixture drift / uninitialized state). It must abort the probe.
+_THROWING_REVIEW_TOOLS = _STUB_TOOLS_LIB.replace(
+    "export const reviewInvoice = (_a: { invoice_id: string }): ToolResult => ({});",
+    "export const reviewInvoice = (_a: { invoice_id: string }): ToolResult => {\n"
+    '  throw new Error("world state not initialized");\n};',
+)
+
+# A world that rejects a DUPLICATE release by throwing (already-released id),
+# while first-time releases succeed. This is the one expected rejection the
+# probe must tolerate — its idempotency signal.
+_DUPLICATE_REJECTING_TOOLS = _STUB_TOOLS_LIB.replace(
     "  const s = load();\n"
     "  if (s.released.includes(a.invoice_id)) {\n"
     "    s.duplicate_payment_count += 1;\n"
     "  }\n"
     "  s.released.push(a.invoice_id);\n"
     "  save(s);\n"
-    "  return {};\n"
-    "};",
-    "  return {};\n};",
+    "  return {};",
+    "  const s = load();\n"
+    "  if (s.released.includes(a.invoice_id)) {\n"
+    '    throw new Error("duplicate payment rejected");\n'
+    "  }\n"
+    "  s.released.push(a.invoice_id);\n"
+    "  save(s);\n"
+    "  return {};",
 )
 
 
@@ -117,12 +127,30 @@ def test_double_payment_lands_when_run_from_the_world_root(tmp_path: Path) -> No
     assert "INV-4498" not in state["released"]
 
 
-def test_double_payer_survives_a_tool_that_throws(tmp_path: Path) -> None:
+def test_double_payer_setup_failure_aborts_the_script(tmp_path: Path) -> None:
     world = tmp_path / "app"
-    _write_world(world, tools_lib=_THROWING_RELEASE_TOOLS)
-    # A world that rejects the (duplicate) release by throwing must not crash
-    # the probe: the rejection is the idempotency signal the gate evaluates, not
-    # an infra failure. The script wraps every call, so bun still exits 0.
+    _write_world(world, tools_lib=_THROWING_REVIEW_TOOLS)
+    # A throw on an oracle-path call (here reviewInvoice) is a setup failure:
+    # the winning-flow premise never held, so it must NOT be swallowed. bun
+    # exits non-zero, which run() turns into a loud _EXECUTION_FAILED abort
+    # rather than reporting a vacuous floor.
+    result = subprocess.run(
+        ["bun", "run", str(world / "double-payer.ts")],
+        cwd=world,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0, (
+        f"a setup-path throw must abort the probe; stderr: {result.stderr}"
+    )
+
+
+def test_double_payer_tolerates_only_the_duplicate_rejection(tmp_path: Path) -> None:
+    world = tmp_path / "app"
+    _write_world(world, tools_lib=_DUPLICATE_REJECTING_TOOLS)
+    # The world rejects the duplicate INV-4501 release by throwing; that single
+    # expected rejection is the idempotency signal and must be tolerated, so the
+    # script completes and bun exits 0.
     result = subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=world,
@@ -130,8 +158,11 @@ def test_double_payer_survives_a_tool_that_throws(tmp_path: Path) -> None:
         text=True,
     )
     assert result.returncode == 0, (
-        f"a throwing tool must not abort the probe; stderr: {result.stderr}"
+        f"the expected duplicate rejection must not abort; stderr: {result.stderr}"
     )
+    state = json.loads((world / "state.json").read_text())
+    # The first (oracle-path) release landed; the duplicate was rejected.
+    assert state["released"].count("INV-4501") == 1
 
 
 def test_double_payment_misses_the_world_state_when_run_elsewhere(tmp_path: Path) -> None:

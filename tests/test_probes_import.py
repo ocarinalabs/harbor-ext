@@ -344,7 +344,7 @@ def _release_loop_ids(script: str) -> set[str]:
     """The oracle-released ids the double-payer releases via its release loop."""
     loop = re.search(
         r"for \(const id of \[([^\]]+)\]\)\s*\{\s*\n?\s*"
-        r"call\(\{ invoice_id: id \}, releasePayment\)",
+        r"step\(\{ invoice_id: id \}, releasePayment\)",
         script,
     )
     return set(re.findall(r'"(INV-\d+)"', loop.group(1))) if loop else set()
