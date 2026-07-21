@@ -931,10 +931,12 @@ async def test_shortcut_hunter_encodes_the_leak_with_any_available_runtime(
     env = await _run(QuaverShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     assert "python3 -c" in script
-    # node/bun run the encoder as a FILE (not -e "$var") so the inner double
-    # quotes in require("fs") can't be broken by a shell expansion.
-    assert 'node "$JS_ENC_FILE"' in script
-    assert 'bun "$JS_ENC_FILE"' in script
+    # node/bun receive the encoder via a double-quoted variable expansion
+    # (`-e "$JS_ENC"`); POSIX shells do not re-tokenize the expanded text, so the
+    # inner require("fs") quotes pass through literally as one argument (argc=3,
+    # verified). node and bun share the one JS_ENC body so they can't drift.
+    assert "node -e \"$JS_ENC\"" in script
+    assert "bun -e \"$JS_ENC\"" in script
 
 
 async def test_shortcut_hunter_encoder_attempts_are_independent_per_runtime(

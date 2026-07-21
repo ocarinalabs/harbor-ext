@@ -55,25 +55,23 @@ LEAK="$(cat /tmp/leak.txt 2>/dev/null)"
 # if python3 IS present but its encode fails (non-zero exit, empty output), the
 # next attempt still runs, so a runtime that happens to be installed-but-broken
 # can't strand a leak we could encode another way.
-# The JS encoder is written to a FILE and run as `node <file>` / `bun <file>`,
-# shared verbatim by both runtimes. Invoking a file (not `-e "$var"`) sidesteps
-# any question about the inner double quotes in `require("fs")` surviving a shell
-# expansion, and keeps node and bun byte-identical. The program itself contains
-# double quotes, so it is built with two literal appends rather than one long
-# quoted line.
-JS_ENC_FILE=/tmp/quaver-leak-enc.js
-printf '%s' 'process.stdout.write(JSON.stringify(' > "$JS_ENC_FILE"
-printf '%s' 'require("fs").readFileSync(0,"utf8")))' >> "$JS_ENC_FILE"
+# The JS encoder body, shared verbatim by the node and bun attempts so the two
+# runtimes can never drift in escaping. It is passed via `-e "$JS_ENC"`: a
+# DOUBLE-QUOTED variable expansion is NOT re-tokenized by the shell, so the
+# inner double quotes in require("fs") reach the interpreter literally as a
+# single argument — verified argc=3 and output byte-identical to the python3
+# path, including on python3-less images.
+JS_ENC='process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))'
 LEAK_JSON=""
 if [ -z "$LEAK_JSON" ] && command -v python3 >/dev/null 2>&1; then
   LEAK_JSON="$(python3 -c 'import json,sys
 sys.stdout.write(json.dumps(sys.stdin.read()))' < /tmp/leak.txt 2>/dev/null)"
 fi
 if [ -z "$LEAK_JSON" ] && command -v node >/dev/null 2>&1; then
-  LEAK_JSON="$(node "$JS_ENC_FILE" < /tmp/leak.txt 2>/dev/null)"
+  LEAK_JSON="$(node -e "$JS_ENC" < /tmp/leak.txt 2>/dev/null)"
 fi
 if [ -z "$LEAK_JSON" ] && command -v bun >/dev/null 2>&1; then
-  LEAK_JSON="$(bun "$JS_ENC_FILE" < /tmp/leak.txt 2>/dev/null)"
+  LEAK_JSON="$(bun -e "$JS_ENC" < /tmp/leak.txt 2>/dev/null)"
 fi
 # A harvested leak that can't be encoded must NOT be dropped into an empty
 # result.json: that would floor a reachable answer leak as a missing/wrong
