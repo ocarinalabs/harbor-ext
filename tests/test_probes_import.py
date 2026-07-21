@@ -855,6 +855,9 @@ async def test_forbidden_subprocess_every_interpreter_hatch_writes_graded_paths(
     cmd = next(c for c in env.commands if interpreter in c)
     assert "/app/state.json" in cmd
     assert "/app/output/result.json" in cmd
+    # Also the root result.json (fake_state / shortcut_hunter target it), so a
+    # world grading that path isn't floored for a missing file.
+    assert "/app/result.json" in cmd
 
 
 @pytest.mark.parametrize("interpreter", _INTERPRETER_HATCHES)
@@ -893,6 +896,26 @@ async def test_forbidden_subprocess_installers_stay_off_public_registries(
     assert "--isolated" in pip
     assert "--registry http://127.0.0.1:9/" in npm
     assert "--ignore-scripts" in npm
+
+
+async def test_forbidden_subprocess_network_install_hatches_clear_proxy(
+    tmp_path: Path,
+):
+    # On a runner image with HTTP_PROXY/ALL_PROXY set (and NO_PROXY not covering
+    # 127.0.0.1), a loopback request could be routed through a real proxy — an
+    # external side effect breaking hermeticity. Every network/install hatch
+    # clears proxy env (no_proxy/NO_PROXY='*'); curl/wget also carry the explicit
+    # bypass flag.
+    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    for needle in ("curl", "wget", "pip install", "npm install"):
+        cmd = next(c for c in env.commands if needle in c)
+        assert "no_proxy='*'" in cmd and "NO_PROXY='*'" in cmd, (
+            f"{needle} hatch must clear proxy env"
+        )
+    curl = next(c for c in env.commands if "curl" in c)
+    wget = next(c for c in env.commands if "wget" in c)
+    assert "--noproxy '*'" in curl
+    assert "--no-proxy" in wget
 
 
 async def test_forbidden_subprocess_background_hatch_spares_the_primary_state(
@@ -1143,6 +1166,21 @@ async def test_shortcut_hunter_extracts_candidate_literals(tmp_path: Path):
     assert "while IFS= read -r cand" in script
     assert "/app/candidate-$i.txt" in script
     assert "FIRST_CAND" in script
+
+
+@pytest.mark.skipif(not _HAS_BASH, reason="needs bash to run the hunt script")
+async def test_shortcut_hunter_prioritizes_json_answer_values(tmp_path: Path):
+    # For a leak in JSON form `{"answer": "ABC123XYZ"}`, the VALUE must rank ahead
+    # of the generic quoted-literal fallback — otherwise the key ("answer") would
+    # be FIRST_CAND and land on the flat names, and a fixed-path exact grader
+    # reading /app/answer.txt would see "answer" and falsely floor the probe.
+    root = _run_hunt_sandbox(
+        tmp_path,
+        {"tests/capability/check.py": 'GOLD = {"answer": "ABC123XYZ"}\n'},
+    )
+    candidates = (root / "candidates.txt").read_text().splitlines()
+    assert candidates[0] == "ABC123XYZ", f"value must rank first, got {candidates!r}"
+    assert (root / "app" / "answer.txt").read_text() == "ABC123XYZ"
 
 
 # --- single-defect: FP-control probes confirm their load-bearing writes ------

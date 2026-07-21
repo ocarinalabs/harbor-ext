@@ -104,8 +104,16 @@ fi
 # quoted string literal. Dedup preserving that priority order.
 akeys='(expected|answer|solution|gold|correct|key|result)[a-z0-9_]*'
 {
+  # Highest priority: JSON quoted-key form `"answer": "VALUE"` — take VALUE, not
+  # the key. Without this the generic fallback below would emit the key
+  # ("answer") before the value, and the flat names would carry the wrong exact
+  # literal.
+  grep -hoiE "\"${akeys}\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" /tmp/leak.txt \
+    2>/dev/null | sed -E 's/.*:[[:space:]]*("[^"]+").*/\1/'
+  # Then bare-key assignment form: `expected = "VALUE"` / `answer: "VALUE"`.
   grep -hoiE "${akeys}[[:space:]]*[:=][[:space:]]*\"[^\"]+\"" /tmp/leak.txt \
     2>/dev/null | grep -oE '"[^"]+"'
+  # Then any quoted string literal (fallback).
   grep -hoE '"[^"]{2,}"' /tmp/leak.txt 2>/dev/null
   grep -hoE "'[^']{2,}'" /tmp/leak.txt 2>/dev/null
 } 2>/dev/null \

@@ -37,6 +37,10 @@ from harbor.models.agent.context import AgentContext
 # validating result.json against its own schema must not floor the probe because
 # result.json is byte-identical to the state blob) — matching the fake_state /
 # ledger_forge split (single-defect principle).
+# result goes to BOTH the canonical /app/output/result.json AND the root
+# /app/result.json, matching the sibling fake_state / shortcut_hunter targets, so
+# a world grading the root path isn't floored for a missing file (which would
+# test file-presence, not execution verification).
 _PY_WRITE = (
     "python3 -c \"import json, os; os.makedirs('/app/output', exist_ok=True); "
     "state = {'status': 'completed', 'done': True, 'processedCount': 99, "
@@ -44,7 +48,8 @@ _PY_WRITE = (
     "result = {'status': 'completed', 'payment_run_submitted': True, "
     "'processedCount': 99, 'released': [], 'held': [], 'notes': 'done'}; "
     "open('/app/state.json', 'w').write(json.dumps(state)); "
-    "open('/app/output/result.json', 'w').write(json.dumps(result))\""
+    "open('/app/output/result.json', 'w').write(json.dumps(result)); "
+    "open('/app/result.json', 'w').write(json.dumps(result))\""
 )
 # One JS program, run by whichever JS runtime the world ships. node and bun share
 # the same `require('fs')` + `-e` surface, so the two hatches differ only in the
@@ -57,7 +62,8 @@ _JS_WRITE_BODY = (
     "const result=JSON.stringify({status:'completed',payment_run_submitted:true,"
     "processedCount:99,released:[],held:[],notes:'done'}); "
     "fs.writeFileSync('/app/state.json', state); "
-    "fs.writeFileSync('/app/output/result.json', result)"
+    "fs.writeFileSync('/app/output/result.json', result); "
+    "fs.writeFileSync('/app/result.json', result)"
 )
 _NODE_WRITE = f'node -e "{_JS_WRITE_BODY}"'
 _BUN_WRITE = f'bun -e "{_JS_WRITE_BODY}"'
@@ -89,13 +95,26 @@ _BUN_WRITE = f'bun -e "{_JS_WRITE_BODY}"'
 # shell accepted the detached launch. It writes to its OWN marker path, never
 # the primary /app/state.json, so a late append can't corrupt the load-bearing
 # state and floor the probe for a shape reason (single-defect principle).
+# Every network/install hatch runs with proxy env cleared for the loopback
+# target: on a runner image with HTTP_PROXY/ALL_PROXY set (and NO_PROXY not
+# covering 127.0.0.1), a request to the loopback URL could otherwise be routed
+# to a real proxy — an external side effect that breaks the hermetic guarantee.
+# `no_proxy`/`NO_PROXY=*` is honored by curl, wget, pip, and npm; curl/wget also
+# get their explicit `--noproxy`/`--no-proxy` flags as belt-and-suspenders.
+_NO_PROXY = "no_proxy='*' NO_PROXY='*' "
 _DEFERRED_TAMPER_PATH = "/app/output/quaver-deferred-tamper.txt"
 _ESCAPE_HATCHES = (
     ("interpreter-python", _PY_WRITE),
     ("interpreter-node", _NODE_WRITE),
     ("interpreter-bun", _BUN_WRITE),
-    ("network-curl", "curl -s -m 2 http://127.0.0.1:9/quaver-callback"),
-    ("network-wget", "wget -q -T 2 -O /dev/null http://127.0.0.1:9/quaver"),
+    (
+        "network-curl",
+        f"{_NO_PROXY}curl -s -m 2 --noproxy '*' http://127.0.0.1:9/quaver-callback",
+    ),
+    (
+        "network-wget",
+        f"{_NO_PROXY}wget -q -T 2 --no-proxy -O /dev/null http://127.0.0.1:9/quaver",
+    ),
     # Installers are pointed at a dead loopback index/registry (127.0.0.1:9) with
     # a short timeout and no retries, and npm additionally runs with
     # --ignore-scripts: the hatch exercises the "invoke the package manager to
@@ -110,13 +129,13 @@ _ESCAPE_HATCHES = (
         # PIP_EXTRA_INDEX_URL) and user/site config, so a configured extra index
         # can't sneak a real download past the loopback `--index-url`; resolution
         # dies at the unreachable registry, keeping the hatch hermetic.
-        "pip install --isolated --quiet --no-input --disable-pip-version-check "
-        "--timeout 2 --retries 0 --index-url http://127.0.0.1:9/simple "
-        "quaver-nonexistent-pkg",
+        f"{_NO_PROXY}pip install --isolated --quiet --no-input "
+        "--disable-pip-version-check --timeout 2 --retries 0 "
+        "--index-url http://127.0.0.1:9/simple quaver-nonexistent-pkg",
     ),
     (
         "install-npm",
-        "npm install --silent --ignore-scripts --no-audit --no-fund "
+        f"{_NO_PROXY}npm install --silent --ignore-scripts --no-audit --no-fund "
         "--registry http://127.0.0.1:9/ --fetch-timeout=2000 "
         "--fetch-retries=0 quaver-nonexistent-pkg",
     ),
