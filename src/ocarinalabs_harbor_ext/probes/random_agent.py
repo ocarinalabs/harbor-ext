@@ -65,18 +65,21 @@ const callable = Object.entries(tools).filter(
   ([, v]) => typeof v === "function"
 ) as [string, (a: unknown) => { isError?: boolean }][];
 
-// A single call with one arbitrary argument. A tool may validate its args and
-// THROW before touching state or the in-container ledger — that is a rejected
-// call, not witnessed activity — so callOnce reports whether the body actually
-// ran to completion. Since the driver never writes the trajectory, a throw here
-// can't leave forged coverage behind either way.
+// A single call with one arbitrary argument. A tool can reject bad args two
+// ways — by THROWING, or by returning `{ isError: true }` — and the sibling
+// probes (state_rewrite, ap_payment_double_payer) treat BOTH as a failed call
+// with no real tool activity behind it. callOnce follows that same convention:
+// it reports completion only when the body ran without throwing AND did not
+// return an isError result. A rejected call is not witnessed activity, so it
+// must not count toward coverage. Since the driver never writes the trajectory,
+// a throw here can't leave forged coverage behind either way.
 const callOnce = (
-  fn: (a: unknown) => { isError?: boolean },
+  fn: (a: unknown) => { isError?: boolean } | undefined,
   args: unknown,
 ): boolean => {
   try {
-    fn(args);
-    return true;
+    const result = fn(args);
+    return !(result && result.isError === true);
   } catch {
     return false;
   }

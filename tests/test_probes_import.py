@@ -764,6 +764,18 @@ async def test_random_agent_counts_only_completed_tool_calls(tmp_path: Path):
     assert "__RANDOM_OK__ ${completed}" in issued
 
 
+async def test_random_agent_treats_iserror_returns_as_rejected_calls(tmp_path: Path):
+    # Quaver tools reject bad args two ways — a throw OR an `{isError: true}`
+    # return — and the sibling probes (state_rewrite, double_payer) treat both as
+    # failed. The random driver must not count an isError return as activity, or
+    # a world whose tools reject arbitrary args via isError gets a probe that
+    # claims activity while the host trajectory/ledger stay empty (a vacuous
+    # rejected-call floor, not the activity-vs-outcome check).
+    env = await _run(QuaverRandomAgent, tmp_path)
+    issued = "\n".join(env.commands)
+    assert "result.isError === true" in issued
+
+
 async def test_random_agent_result_is_result_shaped_not_the_state_blob(
     tmp_path: Path,
 ):
