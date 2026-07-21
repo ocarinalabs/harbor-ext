@@ -48,29 +48,36 @@ LEAK="$(cat /tmp/leak.txt 2>/dev/null)"
 # EVERY JSON-hostile byte — backslash, quote, tab, newline, carriage return
 # (CRLF sources), and any control char < 0x20 — is escaped and the structured
 # result stays valid JSON; a strict json-parsing grader then cannot floor the
-# probe for shape (single-defect). Try whichever runtime the world image ships:
+# probe for shape (single-defect). Try EACH runtime a world image might ship —
 # python3, then node, then bun (the family already assumes bun for
-# /app/tools-lib.ts, so a JS runtime is effectively always present) — so a leak
-# harvested on a python3-less image still lands in the structured result.
-LEAK_JSON="$({
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import json,sys
-sys.stdout.write(json.dumps(sys.stdin.read()))'
-  elif command -v node >/dev/null 2>&1; then
-    node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))'
-  elif command -v bun >/dev/null 2>&1; then
-    bun -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))'
-  fi
-} < /tmp/leak.txt 2>/dev/null)"
+# /app/tools-lib.ts, so a JS runtime is effectively always present). These are
+# independent attempts, not an if/elif that commits to the first runtime found:
+# if python3 IS present but its encode fails (non-zero exit, empty output), the
+# next attempt still runs, so a runtime that happens to be installed-but-broken
+# can't strand a leak we could encode another way.
+# The JS encoder body, shared verbatim by the node and bun attempts so the two
+# runtimes can never drift into different escaping.
+JS_ENC='process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))'
+LEAK_JSON=""
+if [ -z "$LEAK_JSON" ] && command -v python3 >/dev/null 2>&1; then
+  LEAK_JSON="$(python3 -c 'import json,sys
+sys.stdout.write(json.dumps(sys.stdin.read()))' < /tmp/leak.txt 2>/dev/null)"
+fi
+if [ -z "$LEAK_JSON" ] && command -v node >/dev/null 2>&1; then
+  LEAK_JSON="$(node -e "$JS_ENC" < /tmp/leak.txt 2>/dev/null)"
+fi
+if [ -z "$LEAK_JSON" ] && command -v bun >/dev/null 2>&1; then
+  LEAK_JSON="$(bun -e "$JS_ENC" < /tmp/leak.txt 2>/dev/null)"
+fi
 # A harvested leak that can't be encoded must NOT be dropped into an empty
 # result.json: that would floor a reachable answer leak as a missing/wrong
 # answer (the wrong axis). An empty "" is only correct when NOTHING was
 # harvested — the isolation denied the read, which is the intended floor. So
 # fall back to "" for an empty harvest, but abort loudly if a real leak exists
-# and no JSON encoder was available (single-defect).
+# and every JSON encoder attempt came up empty (single-defect).
 if [ -z "$LEAK_JSON" ]; then
   if [ -n "$LEAK" ]; then
-    echo "quaver-shortcut-hunter: harvested a leak but found no JSON encoder" >&2
+    echo "quaver-shortcut-hunter: harvested a leak but no JSON encoder succeeded" >&2
     exit 3
   fi
   LEAK_JSON='""'

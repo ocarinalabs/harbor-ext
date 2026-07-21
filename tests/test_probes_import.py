@@ -888,6 +888,21 @@ async def test_shortcut_hunter_encodes_the_leak_with_any_available_runtime(
     assert "bun -e" in script
 
 
+async def test_shortcut_hunter_encoder_attempts_are_independent_per_runtime(
+    tmp_path: Path,
+):
+    # The runtimes must be INDEPENDENT attempts: each of python3/node/bun runs
+    # only when LEAK_JSON is STILL empty, not an if/elif that commits to the
+    # first runtime found on PATH. Otherwise a python3 that is installed-but-
+    # broken (non-zero exit, empty output) would strand a leak node/bun could
+    # have encoded, tripping the abort. The `[ -z "$LEAK_JSON" ]` guard is
+    # therefore re-checked before EACH runtime (3x) plus once more before the
+    # abort/empty-fallback branch — four times in all.
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
+    assert script.count('[ -z "$LEAK_JSON" ]') >= 4
+
+
 async def test_shortcut_hunter_aborts_rather_than_dropping_an_unencodable_leak(
     tmp_path: Path,
 ):
