@@ -746,6 +746,24 @@ async def test_random_agent_drives_real_tools_then_writes_wrong_state(tmp_path: 
     assert "callable.length > 0" in issued
 
 
+async def test_random_agent_counts_only_completed_tool_calls(tmp_path: Path):
+    # A tool that validates its args and THROWS before doing any work is a
+    # rejected call, not host-witnessed activity; counting the attempt would let
+    # the driver claim `__RANDOM_OK__ N` while every random arg was rejected and
+    # the probe degenerated to the no-activity floor it's meant to avoid. So
+    # callOnce reports completion and only completed calls are counted, and the
+    # guarantee sweeps every callable × every grab-bag arg to find one that runs.
+    env = await _run(QuaverRandomAgent, tmp_path)
+    issued = "\n".join(env.commands)
+    # callOnce returns a boolean and is only counted when truthy.
+    assert "): boolean =>" in issued
+    assert "if (callOnce(fn, pick(grabBag))) completed += 1;" in issued
+    # The guarantee tries multiple args, not a single arbitrary pick that a
+    # strict tool could reject outright.
+    assert "for (const args of grabBag)" in issued
+    assert "__RANDOM_OK__ ${completed}" in issued
+
+
 async def test_random_agent_result_is_result_shaped_not_the_state_blob(
     tmp_path: Path,
 ):
@@ -827,6 +845,23 @@ async def test_forbidden_subprocess_result_is_result_shaped_not_the_state_blob(
     assert "notes" in cmd, f"{interpreter} hatch must write a result summary"
     assert "released" in cmd
     assert "fatal_error" in cmd
+
+
+async def test_forbidden_subprocess_installers_stay_off_public_registries(
+    tmp_path: Path,
+):
+    # The install hatches must exercise the "invoke the package manager"
+    # capability WITHOUT contacting public PyPI/npm: otherwise a package named
+    # `quaver-nonexistent-pkg` that exists (or is later registered) could be
+    # downloaded and executed, breaking the probe's hermetic guarantee. Both are
+    # pointed at a dead loopback registry with short timeouts/no retries, and npm
+    # runs with scripts disabled so nothing executes even if resolution changed.
+    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    pip = next(c for c in env.commands if "pip install" in c)
+    npm = next(c for c in env.commands if "npm install" in c)
+    assert "--index-url http://127.0.0.1:9/simple" in pip
+    assert "--registry http://127.0.0.1:9/" in npm
+    assert "--ignore-scripts" in npm
 
 
 async def test_forbidden_subprocess_background_hatch_spares_the_primary_state(

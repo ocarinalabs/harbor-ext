@@ -65,33 +65,53 @@ const callable = Object.entries(tools).filter(
   ([, v]) => typeof v === "function"
 ) as [string, (a: unknown) => { isError?: boolean }][];
 
-// An arbitrary-argument call may legitimately throw; that is still random
-// activity, and since the driver never writes the trajectory a throw here
-// cannot leave forged coverage behind.
-const callOnce = (fn: (a: unknown) => { isError?: boolean }): void => {
+// A single call with one arbitrary argument. A tool may validate its args and
+// THROW before touching state or the in-container ledger — that is a rejected
+// call, not witnessed activity — so callOnce reports whether the body actually
+// ran to completion. Since the driver never writes the trajectory, a throw here
+// can't leave forged coverage behind either way.
+const callOnce = (
+  fn: (a: unknown) => { isError?: boolean },
+  args: unknown,
+): boolean => {
   try {
-    fn(pick(grabBag));
-  } catch {}
+    fn(args);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
-let performed = 0;
+// Count only COMPLETED calls — a tool that threw on arbitrary args did no work
+// the host would witness, so counting the attempt would let the driver claim
+// activity it never produced.
+let completed = 0;
 for (const [, fn] of shuffle(callable)) {
   const times = Math.floor(Math.random() * 3);
   for (let i = 0; i < times; i += 1) {
-    callOnce(fn);
-    performed += 1;
+    if (callOnce(fn, pick(grabBag))) completed += 1;
   }
 }
-// Guarantee at least one real tool call when the world exposes any tool: with
-// a one- or two-function tools-lib every `times` can roll 0, leaving no
-// host-witnessed activity — then a floor would prove only a no-op, not the
-// activity-vs-outcome case this control targets. Force one call so the probe
-// reliably exercises coverage before its wrong state floors it.
-if (performed === 0 && callable.length > 0) {
-  callOnce(pick(callable)[1]);
-  performed += 1;
+// Guarantee at least one COMPLETED tool call when the world exposes any tool:
+// with a one- or two-function tools-lib every `times` can roll 0 (and the
+// random args above may all be rejected), leaving no host-witnessed activity —
+// then a floor would prove only a no-op, not the activity-vs-outcome case this
+// control targets. Try every callable against every grab-bag argument until one
+// runs to completion, so a tool that rejects SOME arbitrary args still gets
+// exercised. If a world's tools reject EVERY arbitrary arg, no completion is
+// possible without task knowledge; the driver reports the honest count and the
+// probe still floors on its wrong state.
+if (completed === 0 && callable.length > 0) {
+  search: for (const [, fn] of callable) {
+    for (const args of grabBag) {
+      if (callOnce(fn, args)) {
+        completed += 1;
+        break search;
+      }
+    }
+  }
 }
-console.log(`__RANDOM_OK__ ${performed}`);
+console.log(`__RANDOM_OK__ ${completed}`);
 """
 
 # Structurally valid but deliberately WRONG final state: the task is not marked
