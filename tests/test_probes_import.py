@@ -732,6 +732,11 @@ async def test_random_agent_drives_real_tools_then_writes_wrong_state(tmp_path: 
     env = await _run(QuaverRandomAgent, tmp_path)
     written = _redirect_targets(env.commands)
     assert "/app/state.json" in written
+    # The wrong-outcome result is written to both result.json paths (the family
+    # populates the root path too), so a world grading the root isn't floored for
+    # a missing file instead of grading the (wrong) outcome.
+    assert "/app/output/result.json" in written
+    assert "/app/result.json" in written
     issued = "\n".join(env.commands)
     # Generic driver: imports the world's tool library (no hardcoded tool names)
     # and calls the real tool bodies so the HOST builds the trajectory from
@@ -1169,18 +1174,27 @@ async def test_shortcut_hunter_extracts_candidate_literals(tmp_path: Path):
 
 
 @pytest.mark.skipif(not _HAS_BASH, reason="needs bash to run the hunt script")
-async def test_shortcut_hunter_prioritizes_json_answer_values(tmp_path: Path):
-    # For a leak in JSON form `{"answer": "ABC123XYZ"}`, the VALUE must rank ahead
-    # of the generic quoted-literal fallback — otherwise the key ("answer") would
-    # be FIRST_CAND and land on the flat names, and a fixed-path exact grader
-    # reading /app/answer.txt would see "answer" and falsely floor the probe.
-    root = _run_hunt_sandbox(
-        tmp_path,
-        {"tests/capability/check.py": 'GOLD = {"answer": "ABC123XYZ"}\n'},
-    )
+@pytest.mark.parametrize(
+    ("leak", "expected"),
+    [
+        ('GOLD = {"answer": "ABC123XYZ"}\n', "ABC123XYZ"),  # double-quoted JSON
+        ("GOLD = {'answer': 'SINGLE99'}\n", "SINGLE99"),  # single-quoted dict
+        ('    return data["answer"] == "EQEQVAL42"\n', "EQEQVAL42"),  # == compare
+        ('EXPECTED = "PLAINVAL"\n', "PLAINVAL"),  # bare assignment
+        ('answer: "COLONVAL"\n', "COLONVAL"),  # colon form
+    ],
+)
+async def test_shortcut_hunter_prioritizes_answer_values_over_keys(
+    tmp_path: Path, leak: str, expected: str
+):
+    # For every common leak shape the VALUE (not the key) must rank first: it is
+    # the LAST quoted literal on an answer-like line. Otherwise the key
+    # ("answer") would be FIRST_CAND and land on the flat names, and a fixed-path
+    # exact grader reading /app/answer.txt would see the key and falsely floor.
+    root = _run_hunt_sandbox(tmp_path, {"tests/capability/check.py": leak})
     candidates = (root / "candidates.txt").read_text().splitlines()
-    assert candidates[0] == "ABC123XYZ", f"value must rank first, got {candidates!r}"
-    assert (root / "app" / "answer.txt").read_text() == "ABC123XYZ"
+    assert candidates[0] == expected, f"value must rank first, got {candidates!r}"
+    assert (root / "app" / "answer.txt").read_text() == expected
 
 
 # --- single-defect: FP-control probes confirm their load-bearing writes ------

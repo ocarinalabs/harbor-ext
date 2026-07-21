@@ -102,18 +102,18 @@ fi
 # candidate literals from the harvest: the RHS of answer-like `key = "..."` /
 # `key: "..."` assignments (the likeliest answer, so ranked FIRST), then any
 # quoted string literal. Dedup preserving that priority order.
-akeys='(expected|answer|solution|gold|correct|key|result)[a-z0-9_]*'
+akeys='(expected|answer|solution|gold|correct|key|result)'
 {
-  # Highest priority: JSON quoted-key form `"answer": "VALUE"` — take VALUE, not
-  # the key. Without this the generic fallback below would emit the key
-  # ("answer") before the value, and the flat names would carry the wrong exact
-  # literal.
-  grep -hoiE "\"${akeys}\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" /tmp/leak.txt \
-    2>/dev/null | sed -E 's/.*:[[:space:]]*("[^"]+").*/\1/'
-  # Then bare-key assignment form: `expected = "VALUE"` / `answer: "VALUE"`.
-  grep -hoiE "${akeys}[[:space:]]*[:=][[:space:]]*\"[^\"]+\"" /tmp/leak.txt \
-    2>/dev/null | grep -oE '"[^"]+"'
-  # Then any quoted string literal (fallback).
+  # Highest priority: on any line mentioning an answer-like key, take the LAST
+  # quoted literal (single OR double quotes). That value is the leaked answer in
+  # every common shape — `expected = "V"`, `answer: "V"`, `"answer": "V"`,
+  # `{'answer': 'V'}`, and `data["answer"] == "V"` — because the key and any
+  # other tokens always precede the value on the line. Without this the generic
+  # fallback would emit the key ("answer") before the value and the flat output
+  # names would carry the wrong exact literal.
+  grep -hiE "$akeys" /tmp/leak.txt 2>/dev/null \
+    | sed -nE 's/.*["'"'"']([^"'"'"']+)["'"'"'][^"'"'"']*$/\1/p'
+  # Fallback: any quoted string literal anywhere in the harvest.
   grep -hoE '"[^"]{2,}"' /tmp/leak.txt 2>/dev/null
   grep -hoE "'[^']{2,}'" /tmp/leak.txt 2>/dev/null
 } 2>/dev/null \

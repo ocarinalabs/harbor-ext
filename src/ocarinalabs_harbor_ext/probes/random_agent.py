@@ -183,10 +183,15 @@ class QuaverRandomAgent(BaseAgent):
         # The wrong-outcome state IS the load-bearing evidence, so each write's
         # own exit status is the check — no trailing echo, whose exit 0 would
         # mask a failed cat and report a floor the probe never actually set up.
-        # result.json gets the result-shaped summary, not the state blob.
+        # result.json gets the result-shaped summary, not the state blob, and is
+        # written to BOTH the canonical /app/output/result.json AND the root
+        # /app/result.json (the sibling fake_state / forbidden_subprocess /
+        # shortcut_hunter target both), so a world grading the root path isn't
+        # floored for a missing file instead of grading the (wrong) outcome.
         state_writes = (
             f"cat > /app/state.json <<'STATE_EOF'\n{_WRONG_STATE}\nSTATE_EOF",
             f"cat > /app/output/result.json <<'RESULT_EOF'\n{_WRONG_RESULT}\nRESULT_EOF",
+            f"cat > /app/result.json <<'ROOT_RESULT_EOF'\n{_WRONG_RESULT}\nROOT_RESULT_EOF",
         )
         for write in state_writes:
             result = await environment.exec(write)
