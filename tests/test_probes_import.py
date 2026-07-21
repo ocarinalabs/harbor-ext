@@ -509,3 +509,15 @@ async def test_state_rewrite_aborts_loudly_when_spine_fails(tmp_path: Path):
     assert not any("/app/state.json" in cmd for cmd in env.commands), (
         "no state must be forged once the spine premise fails"
     )
+
+
+async def test_state_rewrite_aborts_when_a_forge_write_fails(tmp_path: Path):
+    # The spine succeeds, but appending the forged ledger fails. Completing
+    # normally would leave partial evidence (state without a matching ledger),
+    # which floors the probe for ledger/shape reasons instead of the intended
+    # release-magnitude gap — so the forge step must fail loudly like the spine.
+    env = _FailingRunEnv("cat >> /app/actions.log")
+    with pytest.raises(RuntimeError, match="incomplete forge"):
+        await QuaverStateRewrite(logs_dir=tmp_path).run(
+            "do the task", env, AgentContext()
+        )

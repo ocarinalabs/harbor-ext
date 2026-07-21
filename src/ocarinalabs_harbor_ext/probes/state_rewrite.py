@@ -58,6 +58,16 @@ _SPINE_PREMISE_FAILED = (
     "(a genuine tool trajectory) does not hold — refusing to forge state/ledger"
 )
 
+# Raised when any forge write (state, result, or ledger append) exits non-zero.
+# Partial evidence — state without a matching ledger, say — would floor the
+# probe for ledger/shape reasons instead of the intended release-magnitude gap,
+# so an incomplete forge aborts loudly rather than reporting. "incomplete forge"
+# is the stable phrase tests and operators match.
+_FORGE_INCOMPLETE = (
+    "quaver-state-rewrite: a forge write failed — incomplete forge would leave "
+    "partial evidence, aborting so the probe cannot floor for the wrong reason"
+)
+
 # The winning answer's disposition sets (the single source of truth). The
 # probe claims exactly these; the magnitude attack is that the real spine
 # witnesses only ONE release while the state claims all of them.
@@ -245,20 +255,31 @@ class QuaverStateRewrite(BaseAgent):
         state = _winning_state()
         result = _winning_result()
         ledger = _forged_ledger_lines()
-        await environment.exec(
-            f"cat > /app/state.json <<'RW_EOF'\n{state}\nRW_EOF"
-        )
-        await environment.exec(
-            f"cat > /app/output/result.json <<'RW_EOF'\n{result}\nRW_EOF"
-        )
-        forge = await environment.exec(
+        # Each forge write must land completely: the state, the result, and the
+        # appended ledger together are the evidence. A partial forge (any one of
+        # these failing) aborts loudly, same discipline as the spine step, so
+        # the probe never reports half-written evidence.
+        forge_writes = (
+            f"cat > /app/state.json <<'RW_EOF'\n{state}\nRW_EOF",
+            f"cat > /app/output/result.json <<'RW_EOF'\n{result}\nRW_EOF",
             f"cat >> /app/actions.log <<'RW_EOF'\n{ledger}\nRW_EOF\n"
-            f"echo __REWRITE_OK__"
+            f"echo __REWRITE_OK__",
+        )
+        forge = None
+        for write in forge_writes:
+            forge = await environment.exec(write)
+            if forge.return_code != 0:
+                raise RuntimeError(
+                    f"{_FORGE_INCOMPLETE} (bun/cat exited {forge.return_code}): "
+                    f"{(forge.stderr or forge.stdout or '')[-300:]}"
+                )
+        rewrite_ok = forge is not None and "__REWRITE_OK__" in (
+            forge.stdout or ""
         )
 
         metadata = context.metadata or {}
         metadata["adversarial_agent"] = self.name()
         # Reached only when the spine exited 0 (checked above).
         metadata["spine_ok"] = True
-        metadata["rewrite_ok"] = "__REWRITE_OK__" in (forge.stdout or "")
+        metadata["rewrite_ok"] = rewrite_ok
         context.metadata = metadata
