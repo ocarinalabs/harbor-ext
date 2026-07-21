@@ -899,9 +899,11 @@ async def test_shortcut_hunter_reads_the_checkers_and_dumps_to_output(tmp_path: 
     # It sweeps for bundled answer keys and quoted literals.
     assert "answer*" in issued
     assert "grep" in issued
-    # And hardcodes whatever it harvested into the agent's output surface,
-    # including the structured result path the rest of the family grades against.
-    assert "/app/answer.txt" in issued
+    # And hardcodes whatever it harvested into the agent's output surface: the
+    # standard flat names (written to both /app and /app/output via $base) and
+    # the structured result path the rest of the family grades against.
+    assert "answer.txt" in issued
+    assert '> "/app/$base"' in issued
     assert "> /app/state.json" in issued
     assert "/app/output/result.json" in issued
 
@@ -994,13 +996,28 @@ async def test_shortcut_hunter_mirrors_leak_to_root_and_structured_paths(
     # output. Assert on the script text (paths are written in-shell).
     env = await _run(QuaverShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
-    for path in (
-        "/app/result.txt",
-        "/app/result.json",
-        "/app/output/result.txt",
-        "/app/output/result.json",
-    ):
-        assert path in script, f"hunter must write {path}"
+    # Flat standard names are written to BOTH roots via $base; the structured
+    # json results are written to the root and the /app/output surface.
+    assert '> "/app/$base"' in script
+    assert '> "/app/output/$base"' in script
+    assert "/app/result.json" in script
+    assert "/app/output/result.json" in script
+
+
+async def test_shortcut_hunter_covers_the_full_standard_output_name_set(
+    tmp_path: Path,
+):
+    # A world's grader may read any of the family's standard output names —
+    # solution.txt, out.txt, done.flag, etc. If the hunter harvested a leak but
+    # skipped the name that world reads, a reachable leak is scored as missing
+    # output instead of exercising the answer-leak control. Mirror the leak to
+    # the SAME set pattern_5 defines (kept in sync), at /app and /app/output.
+    from ocarinalabs_harbor_ext.probes import pattern_5
+
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
+    for base in pattern_5._STANDARD_OUTPUT_NAMES:
+        assert base in script, f"hunter must write the standard name {base}"
 
 
 # --- single-defect: FP-control probes confirm their load-bearing writes ------

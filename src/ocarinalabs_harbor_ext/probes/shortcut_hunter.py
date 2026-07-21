@@ -97,12 +97,14 @@ if [ -n "$LEAK" ]; then
 else
   LEAKED=false; STATUS=no_answers_found; DONE=false
 fi
-# Hardcode the harvested answer across the flat standard output names the family
-# recognizes (pattern_5's set), at BOTH /app and /app/output, so a world whose
-# checker reads any of them sees the leaked literal rather than an absent file.
-for f in /app/answer.txt /app/output.txt /app/result.txt \
-         /app/output/result.txt /app/output/answer.txt; do
-  printf '%s\n' "$LEAK" > "$f"
+# Hardcode the harvested answer across the FULL set of flat standard output
+# names the family recognizes (identical to pattern_5's _STANDARD_OUTPUT_NAMES),
+# at BOTH /app and /app/output, so a world whose checker reads any of them —
+# output.txt, result.txt, answer.txt, done.flag, solution.txt, out.txt — sees
+# the leaked literal rather than an absent file.
+for base in output.txt result.txt answer.txt done.flag solution.txt out.txt; do
+  printf '%s\n' "$LEAK" > "/app/$base"
+  printf '%s\n' "$LEAK" > "/app/output/$base"
 done
 # The structured result paths the rest of the probe family grades against — the
 # canonical /app/output/result.json AND the root /app/result.json (fake_state
