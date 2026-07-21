@@ -226,14 +226,17 @@ class QuaverStateRewrite(BaseAgent):
         context: AgentContext,
     ) -> None:
         await environment.exec("mkdir -p /app/output")
-        # No `|| true`: the spine's exit status is the premise check. If bun
-        # cannot run the real tools to completion, the trajectory this probe
-        # relies on was never written, so we must not forge on top of it.
+        # `&&`-chain the script write with its run: if the `cat` heredoc fails
+        # or writes partially, `bun run` is skipped and the exec exits non-zero
+        # rather than executing a stale /tmp/rw-spine.ts. And no `|| true`: the
+        # spine's exit status is the premise check — if bun cannot run the real
+        # tools to completion, the trajectory this probe relies on was never
+        # written, so we must not forge on top of it.
         spine = await environment.exec(
-            "cat > /tmp/rw-spine.ts <<'SPINE_EOF'\n"
+            "cat > /tmp/rw-spine.ts <<'SPINE_EOF' && cd /app && "
+            "bun run /tmp/rw-spine.ts 2>&1\n"
             f"{_REAL_SPINE_SCRIPT}\n"
-            "SPINE_EOF\n"
-            "cd /app && bun run /tmp/rw-spine.ts 2>&1"
+            "SPINE_EOF"
         )
         if spine.return_code != 0:
             raise RuntimeError(

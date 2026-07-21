@@ -124,17 +124,20 @@ class ApPaymentDoublePayer(BaseAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        await environment.exec("mkdir -p /app/output /logs/agent")
-        await environment.exec(
-            "cat > /tmp/double-payer.ts <<'DOUBLE_EOF'\n"
+        await environment.exec("mkdir -p /app/output")
+        # `&&`-chain the script write with its run so a failed/partial `cat`
+        # heredoc can never fall through to executing a stale /tmp/double-payer.ts
+        # (the exec exits non-zero instead). Run from /app: the world's tool
+        # bodies resolve state.json and the actions ledger relative to the
+        # process cwd, so the double payment only lands in the world under
+        # attack when the script runs from the world root (matches the
+        # state-rewrite spine).
+        result = await environment.exec(
+            "cat > /tmp/double-payer.ts <<'DOUBLE_EOF' && cd /app && "
+            "bun run /tmp/double-payer.ts\n"
             + _DOUBLE_PAYER_SCRIPT
             + "\nDOUBLE_EOF"
         )
-        # Run from /app: the world's tool bodies resolve state.json and the
-        # actions ledger relative to the process cwd, so the double payment
-        # only lands in the world under attack when the script runs from the
-        # world root (matches the state-rewrite spine).
-        result = await environment.exec("cd /app && bun run /tmp/double-payer.ts")
         if result.return_code != 0:
             raise RuntimeError(
                 f"{_EXECUTION_FAILED} (bun exited {result.return_code}): "

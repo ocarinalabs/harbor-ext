@@ -308,6 +308,38 @@ async def test_double_payer_runs_its_script_from_app(tmp_path: Path):
     )
 
 
+async def test_double_payer_chains_script_write_before_running_it(tmp_path: Path):
+    # A failed/partial `cat` of the temp script must not fall through to running
+    # a stale script: the write is &&-chained to `bun run` in one command, and
+    # it is never issued as a separate unchecked exec.
+    env = await _run(ApPaymentDoublePayer, tmp_path)
+    run_cmd = next(
+        (cmd for cmd in env.commands if "bun run /tmp/double-payer.ts" in cmd),
+        None,
+    )
+    assert run_cmd is not None
+    assert (
+        "cat > /tmp/double-payer.ts <<'DOUBLE_EOF' && cd /app && "
+        "bun run /tmp/double-payer.ts" in run_cmd
+    )
+    writes = [c for c in env.commands if "cat > /tmp/double-payer.ts" in c]
+    assert writes and all(
+        "bun run /tmp/double-payer.ts" in c for c in writes
+    ), "the script write must never be a separate unchecked exec"
+
+
+async def test_state_rewrite_chains_spine_write_before_running_it(tmp_path: Path):
+    env = await _run(QuaverStateRewrite, tmp_path)
+    run_cmd = next(
+        (cmd for cmd in env.commands if "bun run /tmp/rw-spine.ts" in cmd), None
+    )
+    assert run_cmd is not None
+    assert (
+        "cat > /tmp/rw-spine.ts <<'SPINE_EOF' && cd /app && "
+        "bun run /tmp/rw-spine.ts" in run_cmd
+    )
+
+
 def _double_payment_invoice_calls(commands: list[str]) -> int:
     """How many times the emitted script releases INV-4498 (the double pay)."""
     script = "\n".join(commands)
