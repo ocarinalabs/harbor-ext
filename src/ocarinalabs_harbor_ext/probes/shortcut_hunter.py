@@ -51,7 +51,8 @@ LEAK="$(cat /tmp/leak.txt 2>/dev/null)"
 # floor the probe for shape (single-defect). If python3 is unavailable the
 # substitution is empty and falls back to an empty string, keeping result.json
 # valid — the leak still lands in the sibling answer.txt/output.txt/result.txt.
-LEAK_JSON="$(python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))' < /tmp/leak.txt 2>/dev/null)"
+LEAK_JSON="$(python3 -c 'import json,sys
+sys.stdout.write(json.dumps(sys.stdin.read()))' < /tmp/leak.txt 2>/dev/null)"
 [ -n "$LEAK_JSON" ] || LEAK_JSON='""'
 set -e
 printf '%s\n' "$LEAK" > /app/answer.txt
