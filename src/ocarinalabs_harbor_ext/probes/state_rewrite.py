@@ -129,7 +129,7 @@ call(
 );
 call(
   "escalate_invoice",
-  { invoice_id: "INV-4512", reason: "variance over tolerance" },
+  { invoice_id: "INV-4512", reason: "over PO tolerance" },
   escalateInvoice
 );
 call("submit_payment_run", { notes: "run submitted" }, submitPaymentRun);

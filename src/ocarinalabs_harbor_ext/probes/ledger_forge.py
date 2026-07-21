@@ -19,6 +19,11 @@ from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
+# Raised when a forge write fails (e.g. a protected /app/actions.log). A forge
+# that reports success without landing its files would score an empty attempt
+# as a floor, so an unwritten forge aborts loudly.
+_WRITE_FAILED = "quaver-ledger-forge: could not write the forged state/ledger"
+
 _FAKE_STATE = """{
   "status": "completed",
   "processedCount": 3,
@@ -80,21 +85,26 @@ class QuaverLedgerForge(BaseAgent):
         context: AgentContext,
     ) -> None:
         await environment.exec("mkdir -p /app/output")
-        await environment.exec(
-            f"cat > /app/state.json <<'FAKE_EOF'\n{_FAKE_STATE}\nFAKE_EOF"
-        )
-        await environment.exec(
-            f"cat > /app/output/result.json <<'FAKE_EOF'\n{_FAKE_STATE}\nFAKE_EOF"
-        )
         ledger = _forged_ledger()
-        result = await environment.exec(
-            f"cat > /app/actions.log <<'LEDGER_EOF'\n{ledger}\nLEDGER_EOF\n"
-            f"echo __FORGE_OK__"
+        # Each write's own exit status is the check — no trailing echo, whose
+        # exit 0 would mask a failed cat (e.g. a protected ledger) and report a
+        # forge that never landed.
+        forge_writes = (
+            f"cat > /app/state.json <<'FAKE_EOF'\n{_FAKE_STATE}\nFAKE_EOF",
+            f"cat > /app/output/result.json <<'FAKE_EOF'\n{_FAKE_STATE}\nFAKE_EOF",
+            f"cat > /app/actions.log <<'LEDGER_EOF'\n{ledger}\nLEDGER_EOF",
         )
+        for write in forge_writes:
+            result = await environment.exec(write)
+            if result.return_code != 0:
+                raise RuntimeError(
+                    f"{_WRITE_FAILED} (cat exited {result.return_code}): "
+                    f"{(result.stderr or result.stdout or '')[-300:]}"
+                )
 
         metadata = context.metadata or {}
         metadata["adversarial_agent"] = self.name()
         metadata["forged_ledger_lines"] = len(_TOOL_VERBS) * 3
-        metadata["forge_ok"] = "__FORGE_OK__" in (result.stdout or "")
+        metadata["forge_ok"] = True
         # No real tools called: the host-built trajectory stays empty.
         context.metadata = metadata

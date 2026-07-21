@@ -211,6 +211,33 @@ async def test_ledger_forge_writes_state_and_a_well_formed_ok_ledger(tmp_path: P
         assert cols[3] == "ok"
 
 
+async def test_faker_probes_report_only_writes_that_landed(tmp_path: Path):
+    # No probe may report a fake it did not actually write. Each faker's writes
+    # must confirm success by the write's own exit status — never a trailing
+    # echo whose exit 0 masks a failed cat (e.g. a protected path). A failed
+    # write aborts loudly so the run cannot score an empty fake as a floor.
+    for probe_cls, failing_fragment in (
+        (QuaverFakeState, "cat > /app/state.json"),
+        (QuaverLedgerForge, "cat > /app/actions.log"),
+        (ApPaymentStateForger, "cat > /app/state.json"),
+    ):
+        env = _FailingRunEnv(failing_fragment)
+        with pytest.raises(RuntimeError, match="could not write|failed"):
+            await probe_cls(logs_dir=tmp_path).run(
+                "do the task", env, AgentContext()
+            )
+
+
+async def test_faker_probes_do_not_use_echo_success_markers(tmp_path: Path):
+    # The trailing `echo __*_OK__` idiom masks a failed heredoc cat; none of the
+    # faker probes may rely on it. Success is the write's own exit status.
+    for probe_cls in (QuaverFakeState, QuaverLedgerForge, ApPaymentStateForger):
+        env = await _run(probe_cls, tmp_path)
+        issued = "\n".join(env.commands)
+        assert "__FAKE_OK__" not in issued
+        assert "__FORGE_OK__" not in issued
+
+
 async def test_state_rewrite_runs_real_spine_then_forges_state_and_ledger(tmp_path: Path):
     env = await _run(QuaverStateRewrite, tmp_path)
     written = _redirect_targets(env.commands)
@@ -477,6 +504,21 @@ async def test_state_rewrite_ledger_plus_spine_reconciles_to_state(tmp_path: Pat
             f"{verb}: forged {forged[verb]} + spine {spine[verb]} "
             f"!= state {len(state[state_key])}"
         )
+
+
+async def test_state_rewrite_spine_escalation_reason_matches_oracle(tmp_path: Path):
+    # The spine's escalate reason must match the forged state's escalation
+    # reason for the same invoice, or a rubric checking reason text rejects the
+    # forge on shape before magnitude reconciliation.
+    from ocarinalabs_harbor_ext.probes._contractor_payment_run import WINNING_STATE
+
+    env = await _run(QuaverStateRewrite, tmp_path)
+    script = "\n".join(env.commands)
+    match = re.search(
+        r'invoice_id:\s*"INV-4512",\s*reason:\s*"([^"]+)"', script
+    )
+    assert match is not None, "spine must escalate INV-4512 with a reason"
+    assert match.group(1) == WINNING_STATE["escalation_reasons"]["INV-4512"]
 
 
 async def test_state_rewrite_spine_performs_the_declared_ids(tmp_path: Path):

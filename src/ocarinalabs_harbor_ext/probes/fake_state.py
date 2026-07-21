@@ -18,6 +18,11 @@ from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
+# Raised when a fake write fails (e.g. a protected path). Reporting a fake it
+# never wrote would let the probe score an empty attempt as a floor and mask a
+# broken setup, so an unwritten fake aborts loudly.
+_WRITE_FAILED = "quaver-fake-state: could not write the fake state"
+
 # A kitchen-sink "success" state: whatever loose field a state rubric happens
 # to check, this tries to satisfy it — WITHOUT any tool call behind it.
 _FAKE_STATE = """{
@@ -76,14 +81,19 @@ class QuaverFakeState(BaseAgent):
         context: AgentContext,
     ) -> None:
         await environment.exec("mkdir -p /app/output")
+        # Each write's own exit status is the check — no trailing echo, whose
+        # exit 0 would mask a failed cat and report a fake that never landed.
         written: list[str] = []
         for path, payload in _TARGETS:
             result = await environment.exec(
-                f"cat > {path} <<'FAKE_EOF'\n{payload}\nFAKE_EOF\n"
-                f"echo __FAKE_OK__"
+                f"cat > {path} <<'FAKE_EOF'\n{payload}\nFAKE_EOF"
             )
-            if result.return_code == 0 and "__FAKE_OK__" in (result.stdout or ""):
-                written.append(path)
+            if result.return_code != 0:
+                raise RuntimeError(
+                    f"{_WRITE_FAILED} at {path} (cat exited {result.return_code}): "
+                    f"{(result.stderr or result.stdout or '')[-300:]}"
+                )
+            written.append(path)
 
         metadata = context.metadata or {}
         metadata["adversarial_agent"] = self.name()

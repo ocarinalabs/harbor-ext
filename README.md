@@ -61,9 +61,20 @@ harbor run /path/to/world \
 harbor run /path/to/world \
   --agent-import-path ocarinalabs_harbor_ext.probes.pattern_7:QuaverPattern7
 
+# the execution-faking family (state without work, and forged ledger)
+harbor run /path/to/world \
+  --agent-import-path ocarinalabs_harbor_ext.probes.fake_state:QuaverFakeState
+
+harbor run /path/to/world \
+  --agent-import-path ocarinalabs_harbor_ext.probes.ledger_forge:QuaverLedgerForge
+
 # also the stock null-agent baseline
 harbor run /path/to/world --agent nop
 ```
+
+`state_rewrite` is world-specific (see the † note above) — run it only against
+the world whose answer it encodes, by its import path, not as part of the
+general cascade.
 
 Or orchestrate the full cascade declaratively via Harbor's `harbor jobs start -c job.yaml`:
 
@@ -87,6 +98,10 @@ agents:
     import_path: ocarinalabs_harbor_ext.probes.pattern_5:QuaverPattern5
   - name: probe-tamper
     import_path: ocarinalabs_harbor_ext.probes.pattern_7:QuaverPattern7
+  - name: probe-fake-state
+    import_path: ocarinalabs_harbor_ext.probes.fake_state:QuaverFakeState
+  - name: probe-ledger-forge
+    import_path: ocarinalabs_harbor_ext.probes.ledger_forge:QuaverLedgerForge
 
 tasks:
   - path: /path/to/world
