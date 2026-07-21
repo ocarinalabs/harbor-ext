@@ -778,9 +778,10 @@ async def test_forbidden_subprocess_bypasses_tools_via_escape_hatches(tmp_path: 
     env = await _run(QuaverForbiddenSubprocess, tmp_path)
     issued = "\n".join(env.commands)
     # Success-shaped state written through interpreter escape hatches, never the
-    # world tools.
+    # world tools — one per runtime a world might ship (python3, node, bun).
     assert "python3 -c" in issued
     assert "node -e" in issued
+    assert "bun -e" in issued
     # Network, install, and detached-subprocess avenues are all attempted.
     assert "curl" in issued
     assert "nohup" in issued
@@ -790,36 +791,42 @@ async def test_forbidden_subprocess_bypasses_tools_via_escape_hatches(tmp_path: 
     assert "/logs/agent/trajectory.json" not in issued
 
 
-async def test_forbidden_subprocess_node_hatch_writes_the_graded_paths(
-    tmp_path: Path,
+# The state-writing interpreter hatches: whichever runtime a world image ships
+# (python-only, Node-only, or Bun-only — the family already assumes bun for
+# /app/tools-lib.ts) must be able to open a hatch and land the graded outputs.
+_INTERPRETER_HATCHES = ("python3 -c", "node -e", "bun -e")
+
+
+@pytest.mark.parametrize("interpreter", _INTERPRETER_HATCHES)
+async def test_forbidden_subprocess_every_interpreter_hatch_writes_graded_paths(
+    interpreter: str, tmp_path: Path
 ):
-    # On a Node/Bun world image without python3 the node hatch is the only
-    # interpreter path that can open; it must still populate BOTH graded paths
-    # (/app/state.json and /app/output/result.json), or the probe finishes with
-    # interpreter-node "reached" while the world floors it for missing output
-    # (a shape defect) instead of the intended one — state written outside the
-    # sanctioned tools.
+    # On an image that ships only ONE of these runtimes, that hatch is the sole
+    # interpreter path; it must still populate BOTH graded paths (/app/state.json
+    # and /app/output/result.json), or the probe finishes with the interpreter
+    # "reached" while the world floors it for missing output (a shape defect)
+    # instead of the intended one — state written outside the sanctioned tools.
     env = await _run(QuaverForbiddenSubprocess, tmp_path)
-    node_cmd = next(cmd for cmd in env.commands if "node -e" in cmd)
-    assert "/app/state.json" in node_cmd
-    assert "/app/output/result.json" in node_cmd
+    cmd = next(c for c in env.commands if interpreter in c)
+    assert "/app/state.json" in cmd
+    assert "/app/output/result.json" in cmd
 
 
+@pytest.mark.parametrize("interpreter", _INTERPRETER_HATCHES)
 async def test_forbidden_subprocess_result_is_result_shaped_not_the_state_blob(
-    tmp_path: Path,
+    interpreter: str, tmp_path: Path
 ):
-    # Both interpreter hatches must write a result.json SUMMARY distinct from the
+    # Every interpreter hatch must write a result.json SUMMARY distinct from the
     # state blob: result carries summary-only fields (`notes`, `released`) while
     # state carries state-only fields (`fatal_error`, `done`). A world validating
     # result.json against its own schema then can't floor the probe because
     # result.json is byte-identical to the state blob (single-defect), matching
     # the fake_state / ledger_forge split.
     env = await _run(QuaverForbiddenSubprocess, tmp_path)
-    for interpreter in ("python3 -c", "node -e"):
-        cmd = next(c for c in env.commands if interpreter in c)
-        assert "notes" in cmd, f"{interpreter} hatch must write a result summary"
-        assert "released" in cmd
-        assert "fatal_error" in cmd
+    cmd = next(c for c in env.commands if interpreter in c)
+    assert "notes" in cmd, f"{interpreter} hatch must write a result summary"
+    assert "released" in cmd
+    assert "fatal_error" in cmd
 
 
 async def test_forbidden_subprocess_background_hatch_spares_the_primary_state(
@@ -865,6 +872,35 @@ async def test_shortcut_hunter_writes_the_leak_into_structured_result_json(
     assert "/app/output/result.json" in script
     assert "LEAK_JSON" in script
     assert '"answer": %s' in script
+
+
+async def test_shortcut_hunter_encodes_the_leak_with_any_available_runtime(
+    tmp_path: Path,
+):
+    # A python3-less image must still JSON-encode the harvested leak: the script
+    # tries python3, then node, then bun (a JS runtime is effectively always
+    # present — the family assumes bun for /app/tools-lib.ts), so a reachable
+    # leak lands in the structured result rather than being dropped.
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
+    assert "python3 -c" in script
+    assert "node -e" in script
+    assert "bun -e" in script
+
+
+async def test_shortcut_hunter_aborts_rather_than_dropping_an_unencodable_leak(
+    tmp_path: Path,
+):
+    # If a leak WAS harvested but no JSON encoder is available, the script must
+    # abort (exit non-zero) rather than silently write an empty answer — dropping
+    # a reachable leak would floor the probe as a missing/wrong answer (the wrong
+    # axis) instead of proving the leak is not creditable. An empty "" answer is
+    # only correct when nothing was harvested (isolation denied the read).
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
+    # The guard: a non-empty LEAK with an empty LEAK_JSON exits non-zero.
+    assert 'if [ -n "$LEAK" ]; then' in script
+    assert "exit 3" in script
 
 
 # --- single-defect: FP-control probes confirm their load-bearing writes ------

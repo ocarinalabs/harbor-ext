@@ -44,16 +44,37 @@ mkdir -p /app/output
 } > /tmp/leak.txt 2>/dev/null
 
 LEAK="$(cat /tmp/leak.txt 2>/dev/null)"
-# JSON-encode the harvested text into one string literal with a real encoder,
-# so EVERY JSON-hostile byte — backslash, quote, tab, newline, carriage return
-# (CRLF sources), and any other control char < 0x20 — is escaped and the
-# structured result stays valid JSON. A strict json-parsing grader then cannot
-# floor the probe for shape (single-defect). If python3 is unavailable the
-# substitution is empty and falls back to an empty string, keeping result.json
-# valid — the leak still lands in the sibling answer.txt/output.txt/result.txt.
-LEAK_JSON="$(python3 -c 'import json,sys
-sys.stdout.write(json.dumps(sys.stdin.read()))' < /tmp/leak.txt 2>/dev/null)"
-[ -n "$LEAK_JSON" ] || LEAK_JSON='""'
+# JSON-encode the harvested text into one string literal with a REAL encoder, so
+# EVERY JSON-hostile byte — backslash, quote, tab, newline, carriage return
+# (CRLF sources), and any control char < 0x20 — is escaped and the structured
+# result stays valid JSON; a strict json-parsing grader then cannot floor the
+# probe for shape (single-defect). Try whichever runtime the world image ships:
+# python3, then node, then bun (the family already assumes bun for
+# /app/tools-lib.ts, so a JS runtime is effectively always present) — so a leak
+# harvested on a python3-less image still lands in the structured result.
+LEAK_JSON="$({
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys
+sys.stdout.write(json.dumps(sys.stdin.read()))'
+  elif command -v node >/dev/null 2>&1; then
+    node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))'
+  elif command -v bun >/dev/null 2>&1; then
+    bun -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))'
+  fi
+} < /tmp/leak.txt 2>/dev/null)"
+# A harvested leak that can't be encoded must NOT be dropped into an empty
+# result.json: that would floor a reachable answer leak as a missing/wrong
+# answer (the wrong axis). An empty "" is only correct when NOTHING was
+# harvested — the isolation denied the read, which is the intended floor. So
+# fall back to "" for an empty harvest, but abort loudly if a real leak exists
+# and no JSON encoder was available (single-defect).
+if [ -z "$LEAK_JSON" ]; then
+  if [ -n "$LEAK" ]; then
+    echo "quaver-shortcut-hunter: harvested a leak but found no JSON encoder" >&2
+    exit 3
+  fi
+  LEAK_JSON='""'
+fi
 set -e
 printf '%s\n' "$LEAK" > /app/answer.txt
 printf '%s\n' "$LEAK" > /app/output.txt
