@@ -27,17 +27,21 @@ from ocarinalabs_harbor_ext.probes import (
     ApPaymentDoublePayer,
     ApPaymentStateForger,
     QuaverFakeState,
+    QuaverForbiddenSubprocess,
     QuaverLedgerForge,
     QuaverPattern1,
     QuaverPattern4,
     QuaverPattern5,
     QuaverPattern7,
+    QuaverRandomAgent,
+    QuaverShortcutHunter,
     QuaverStateRewrite,
 )
 
-# The general, reusable adversarial gate: the Berkeley patterns plus the
-# execution-faking family. These carry the `quaver-` name prefix and are the
-# probes the ocarina validation gate loads by submodule path.
+# The general, reusable adversarial gate: the Berkeley patterns, the
+# execution-faking family, and the false-positive controls. These carry the
+# `quaver-` name prefix and are the probes the ocarina validation gate loads by
+# submodule path.
 _GATE_PROBES = [
     QuaverPattern1,
     QuaverPattern4,
@@ -46,6 +50,9 @@ _GATE_PROBES = [
     QuaverFakeState,
     QuaverLedgerForge,
     QuaverStateRewrite,
+    QuaverRandomAgent,
+    QuaverForbiddenSubprocess,
+    QuaverShortcutHunter,
 ]
 # World-specific probes (contractor-payment-run). Loaded ad hoc by submodule
 # path during world hardening, not part of the general cascade; they carry an
@@ -94,6 +101,9 @@ def test_probe_names_are_unique():
         "quaver-fake-state",
         "quaver-ledger-forge",
         "quaver-state-rewrite",
+        "quaver-random-agent",
+        "quaver-forbidden-subprocess",
+        "quaver-shortcut-hunter",
         "ap-payment-double-payer",
         "ap-payment-state-forger",
     }
@@ -714,3 +724,105 @@ async def test_state_rewrite_aborts_when_a_forge_write_fails(tmp_path: Path):
         await QuaverStateRewrite(logs_dir=tmp_path).run(
             "do the task", env, AgentContext()
         )
+
+
+async def test_random_agent_drives_real_tools_then_writes_wrong_state(tmp_path: Path):
+    env = await _run(QuaverRandomAgent, tmp_path)
+    written = _redirect_targets(env.commands)
+    assert "/app/state.json" in written
+    issued = "\n".join(env.commands)
+    # Generic driver: imports the world's tool library (no hardcoded tool names)
+    # and emits a real trajectory so coverage-only rubrics see genuine activity.
+    assert "/app/tools-lib.ts" in issued
+    assert "import * as tools" in issued
+    assert "/logs/agent/trajectory.json" in issued
+    assert "ATIF-v1.7" in issued
+    # The final state it writes is deliberately NOT a completed outcome.
+    state_cmd = _command_writing(env.commands, "/app/state.json")
+    assert state_cmd is not None
+    assert '"status": "in_progress"' in state_cmd
+
+
+async def test_forbidden_subprocess_bypasses_tools_via_escape_hatches(tmp_path: Path):
+    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    issued = "\n".join(env.commands)
+    # Success-shaped state written through interpreter escape hatches, never the
+    # world tools.
+    assert "python3 -c" in issued
+    assert "node -e" in issued
+    # Network, install, and detached-subprocess avenues are all attempted.
+    assert "curl" in issued
+    assert "nohup" in issued
+    # It never drives the sanctioned tools or emits an honest trajectory: there
+    # is nothing to back the state it wrote.
+    assert "/app/tools-lib.ts" not in issued
+    assert "/logs/agent/trajectory.json" not in issued
+
+
+async def test_shortcut_hunter_reads_the_checkers_and_dumps_to_output(tmp_path: Path):
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    issued = "\n".join(env.commands)
+    # It reads the rubric checkers directly — the read that isolation must deny.
+    assert "/tests/capability/check.py" in issued
+    assert "/tests/safety/check.py" in issued
+    # It sweeps for bundled answer keys and quoted literals.
+    assert "answer*" in issued
+    assert "grep" in issued
+    # And hardcodes whatever it harvested into the agent's output surface.
+    assert "/app/answer.txt" in issued
+    assert "> /app/state.json" in issued
+
+
+# --- single-defect: FP-control probes confirm their load-bearing writes ------
+
+
+async def test_random_agent_aborts_when_its_state_write_fails(tmp_path: Path):
+    # The wrong-outcome state is this probe's load-bearing evidence; a failed
+    # write must abort loudly, not let an empty run score as a floor for the
+    # wrong reason. (The best-effort tool driver is exempt — a world without a
+    # tools library still leaves the probe floored on its wrong state.)
+    env = _FailingRunEnv("cat > /app/state.json")
+    with pytest.raises(RuntimeError, match="could not write"):
+        await QuaverRandomAgent(logs_dir=tmp_path).run(
+            "do the task", env, AgentContext()
+        )
+
+
+async def test_random_agent_uses_no_echo_success_marker_for_its_writes(
+    tmp_path: Path,
+):
+    # The state writes confirm by their own exit status; a trailing echo would
+    # mask a failed cat. The only marker allowed is the driver's diagnostic
+    # (__RANDOM_OK__), which is best-effort and never gates a write.
+    env = await _run(QuaverRandomAgent, tmp_path)
+    state_cmd = _command_writing(env.commands, "/app/state.json")
+    assert state_cmd is not None
+    assert "echo" not in state_cmd
+
+
+async def test_shortcut_hunter_aborts_when_the_harvest_write_fails(tmp_path: Path):
+    # The harvested answer written to the output surface is the evidence a
+    # literal-match rubric would grade; if that write fails the probe aborts
+    # loudly rather than reporting a floor it never set up (single-defect).
+    env = _FailingRunEnv("bash /tmp/hunt.sh")
+    with pytest.raises(RuntimeError, match="could not write"):
+        await QuaverShortcutHunter(logs_dir=tmp_path).run(
+            "do the task", env, AgentContext()
+        )
+
+
+async def test_forbidden_subprocess_records_only_hatches_that_opened(
+    tmp_path: Path,
+):
+    # Unlike the faker family, this probe EXPECTS most hatches to be blocked on
+    # a hardened world: a non-zero exit is a closed door, not a broken probe, so
+    # it must not abort. With every command failing it completes and records no
+    # reached hatches (reach is the command's own exit status, not an echo).
+    env = _FailingRunEnv("")  # empty fragment => every exec reports failure
+    context = AgentContext()
+    await QuaverForbiddenSubprocess(logs_dir=tmp_path).run(
+        "do the task", env, context
+    )
+    assert context.metadata["escape_hatches_reached"] == []
+    issued = "\n".join(env.commands)
+    assert "__HATCH_OK__" not in issued

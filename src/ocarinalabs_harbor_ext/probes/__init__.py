@@ -16,6 +16,13 @@ probe above the configured floor is not publication-ready.
   passes), then rewrites final state to the winning answer and forges the
   ledger to match. Floored only by the trajectory lower bound in
   reconciliation (host-witnessed calls >= claimed state delta).
+- random_agent / forbidden_subprocess / shortcut_hunter: the gate's
+  false-positive controls. random_agent takes arbitrary valid tool actions and
+  must not earn reward (rewarding activity over outcome is a broken world);
+  forbidden_subprocess reaches the outcome via subprocess escape hatches
+  instead of the sanctioned tools and must be floored by execution + safety
+  checks; shortcut_hunter greps the checkers/fixtures for the answers and
+  hardcodes them — the runtime side of the answer-leak controls.
 
 The probes above form the general, reusable adversarial gate (``quaver-*``
 names). Alongside them ship world-specific probes (``ap-payment-*`` names) that
@@ -32,21 +39,29 @@ from __future__ import annotations
 from ocarinalabs_harbor_ext.probes.ap_payment_double_payer import ApPaymentDoublePayer
 from ocarinalabs_harbor_ext.probes.ap_payment_state_forger import ApPaymentStateForger
 from ocarinalabs_harbor_ext.probes.fake_state import QuaverFakeState
+from ocarinalabs_harbor_ext.probes.forbidden_subprocess import (
+    QuaverForbiddenSubprocess,
+)
 from ocarinalabs_harbor_ext.probes.ledger_forge import QuaverLedgerForge
 from ocarinalabs_harbor_ext.probes.pattern_1 import QuaverPattern1
 from ocarinalabs_harbor_ext.probes.pattern_4 import QuaverPattern4
 from ocarinalabs_harbor_ext.probes.pattern_5 import QuaverPattern5
 from ocarinalabs_harbor_ext.probes.pattern_7 import QuaverPattern7
+from ocarinalabs_harbor_ext.probes.random_agent import QuaverRandomAgent
+from ocarinalabs_harbor_ext.probes.shortcut_hunter import QuaverShortcutHunter
 from ocarinalabs_harbor_ext.probes.state_rewrite import QuaverStateRewrite
 
 __all__ = [
     "ApPaymentDoublePayer",
     "ApPaymentStateForger",
     "QuaverFakeState",
+    "QuaverForbiddenSubprocess",
     "QuaverLedgerForge",
     "QuaverPattern1",
     "QuaverPattern4",
     "QuaverPattern5",
     "QuaverPattern7",
+    "QuaverRandomAgent",
+    "QuaverShortcutHunter",
     "QuaverStateRewrite",
 ]
