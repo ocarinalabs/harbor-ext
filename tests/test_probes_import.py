@@ -211,6 +211,24 @@ async def test_ledger_forge_writes_state_and_a_well_formed_ok_ledger(tmp_path: P
         assert cols[3] == "ok"
 
 
+async def test_ledger_forge_result_payload_is_result_shaped_not_the_state_blob(
+    tmp_path: Path,
+):
+    env = await _run(QuaverLedgerForge, tmp_path)
+    state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
+    result = json.loads(
+        _heredoc_body(env.commands, "/app/output/result.json") or "{}"
+    )
+    # Single-defect: result.json must not be the state blob (a world validating
+    # result with its own schema would reject the probe on shape before
+    # ledger-trajectory reconciliation), and must carry the result-shaped
+    # summary fields, like the sibling fake_state probe.
+    assert result != state
+    assert "items" not in result, "result is a summary, not the state's items"
+    for field in ("status", "payment_run_submitted", "notes"):
+        assert field in result
+
+
 async def test_faker_probes_report_only_writes_that_landed(tmp_path: Path):
     # No probe may report a fake it did not actually write. Each faker's writes
     # must confirm success by the write's own exit status — never a trailing

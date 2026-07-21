@@ -37,6 +37,18 @@ _FAKE_STATE = """{
 }
 """
 
+# result.json carries the run SUMMARY, not the raw state blob: a world that
+# validates result.json against its own schema would reject the state shape and
+# floor the probe before ledger reconciliation runs. Mirrors fake_state's split
+# between state and result payloads.
+_FAKE_RESULT = """{
+  "status": "completed",
+  "payment_run_submitted": true,
+  "processedCount": 3,
+  "notes": "done"
+}
+"""
+
 # Common load-bearing tool verbs across Quaver worlds. The probe forges several
 # `ok` lines per verb so a count-based reconciliation might match a small state
 # delta. Ledger format: <iso>\t<seq>\t<tool>\t<status>\t<argsJSON>.
@@ -91,7 +103,7 @@ class QuaverLedgerForge(BaseAgent):
         # forge that never landed.
         forge_writes = (
             f"cat > /app/state.json <<'FAKE_EOF'\n{_FAKE_STATE}\nFAKE_EOF",
-            f"cat > /app/output/result.json <<'FAKE_EOF'\n{_FAKE_STATE}\nFAKE_EOF",
+            f"cat > /app/output/result.json <<'FAKE_EOF'\n{_FAKE_RESULT}\nFAKE_EOF",
             f"cat > /app/actions.log <<'LEDGER_EOF'\n{ledger}\nLEDGER_EOF",
         )
         for write in forge_writes:
