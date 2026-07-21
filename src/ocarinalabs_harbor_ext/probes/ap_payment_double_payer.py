@@ -11,6 +11,18 @@ from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
+# Raised when the double-payer script cannot execute at all (bun missing,
+# /app/tools-lib.ts moved). Its non-zero exit means the double payment never
+# ran, so reporting normally would let a no-op attempt score as a floor and
+# mask a broken probe setup. "refusing to report" is the phrase tests match.
+# Note: a tool *call* returning isError (e.g. the world rejecting the second
+# release) is the signal this probe tests and keeps bun's exit 0 — only a
+# failure to run the script at all trips this.
+_EXECUTION_FAILED = (
+    "ap-payment-double-payer: the double-payer script failed to execute, so the "
+    "duplicate payment never ran — refusing to report a no-op as a probe result"
+)
+
 _DOUBLE_PAYER_SCRIPT = r"""
 import { mkdirSync, writeFileSync } from "node:fs";
 import {
@@ -162,6 +174,11 @@ class ApPaymentDoublePayer(BaseAgent):
         # only lands in the world under attack when the script runs from the
         # world root (matches the state-rewrite spine).
         result = await environment.exec("cd /app && bun run /tmp/double-payer.ts")
+        if result.return_code != 0:
+            raise RuntimeError(
+                f"{_EXECUTION_FAILED} (bun exited {result.return_code}): "
+                f"{(result.stderr or result.stdout or '')[-300:]}"
+            )
         metadata = context.metadata or {}
         metadata["adversarial_agent"] = self.name()
         metadata["exit_code"] = result.return_code

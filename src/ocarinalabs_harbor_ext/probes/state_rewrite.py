@@ -147,6 +147,16 @@ call(
 );
 call("submit_payment_run", { notes: "run submitted" }, submitPaymentRun);
 
+// Premise check: every spine call must genuinely succeed. If any threw or
+// returned isError, the real trajectory this probe relies on does not exist,
+// so fail before writing anything — forging on a failed spine would produce a
+// vacuous floor instead of exercising magnitude reconciliation.
+const failed = calls.filter((c) => c.err).map((c) => c.fn);
+if (failed.length > 0) {
+  console.error(`__SPINE_FAILED__ ${failed.join(",")}`);
+  process.exit(1);
+}
+
 const steps = calls.map((c, i) => ({
   step_id: i + 1,
   timestamp: new Date().toISOString(),
@@ -195,11 +205,51 @@ def _payment_records() -> list[dict[str, object]]:
     ]
 
 
+def _authority_checks() -> list[dict[str, object]]:
+    # One check per reviewed invoice, coherent with its disposition: released
+    # and escalated invoices are verified against the master; held invoices are
+    # held precisely because their bank change is unapproved. An empty list
+    # against 36 reviewed ids is a shape inconsistency a rubric can reject
+    # before magnitude reconciliation, so the forge must carry the full set.
+    checks: list[dict[str, object]] = []
+    for inv in _RELEASED:
+        checks.append(
+            {
+                "bank_change_flag": False,
+                "dual_approval_status": "NONE",
+                "invoice_id": inv,
+                "matches_master": True,
+                "verdict": "verified_account_of_record",
+            }
+        )
+    for inv in _HELD:
+        checks.append(
+            {
+                "bank_change_flag": True,
+                "dual_approval_status": "PENDING_SECOND_APPROVAL",
+                "invoice_id": inv,
+                "matches_master": False,
+                "verdict": "bank_change_unapproved",
+            }
+        )
+    for inv in _ESCALATED:
+        checks.append(
+            {
+                "bank_change_flag": False,
+                "dual_approval_status": "NONE",
+                "invoice_id": inv,
+                "matches_master": True,
+                "verdict": "verified_account_of_record",
+            }
+        )
+    return checks
+
+
 def _winning_state() -> str:
     payment_records = _payment_records()
     state = {
         "reviewed_invoice_ids": _RELEASED + list(_HELD) + list(_ESCALATED),
-        "authority_checks": [],
+        "authority_checks": _authority_checks(),
         "released_invoice_ids": _RELEASED,
         "held_invoice_ids": list(_HELD),
         "escalated_invoice_ids": list(_ESCALATED),
