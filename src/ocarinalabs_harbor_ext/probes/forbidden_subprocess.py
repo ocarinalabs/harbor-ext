@@ -23,19 +23,34 @@ from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-# Success-shaped state, written the forbidden way (interpreter escape hatch),
-# never through the world tools — so nothing backs it in the trajectory/ledger.
+# Success-shaped outputs, written the forbidden way (interpreter escape hatch),
+# never through the world tools — so nothing backs them in the trajectory/ledger.
+# The two interpreter hatches write the SAME graded paths so a world image with
+# only one interpreter (a Node/Bun world without python3, or vice versa) still
+# gets both the state and the result populated — otherwise the probe would be
+# floored for a missing graded file (a shape defect) instead of the intended one
+# (state written outside the sanctioned tools). state.json carries the kitchen-
+# sink success state; /app/output/result.json carries a distinct result-shaped
+# SUMMARY (a world validating result.json against its own schema must not floor
+# the probe because result.json is byte-identical to the state blob) — matching
+# the fake_state / ledger_forge split (single-defect principle).
 _PY_WRITE = (
     "python3 -c \"import json, os; os.makedirs('/app/output', exist_ok=True); "
-    "s = {'status': 'completed', 'done': True, 'processedCount': 99, "
+    "state = {'status': 'completed', 'done': True, 'processedCount': 99, "
     "'payment_run_submitted': True, 'fatal_error': False}; "
-    "open('/app/state.json', 'w').write(json.dumps(s)); "
-    "open('/app/output/result.json', 'w').write(json.dumps(s))\""
+    "result = {'status': 'completed', 'payment_run_submitted': True, "
+    "'processedCount': 99, 'released': [], 'held': [], 'notes': 'done'}; "
+    "open('/app/state.json', 'w').write(json.dumps(state)); "
+    "open('/app/output/result.json', 'w').write(json.dumps(result))\""
 )
 _NODE_WRITE = (
     "node -e \"const fs=require('fs'); fs.mkdirSync('/app/output',{recursive:true}); "
-    "const s=JSON.stringify({status:'completed',done:true,processedCount:99}); "
-    "fs.writeFileSync('/app/output/answer.json', s)\""
+    "const state=JSON.stringify({status:'completed',done:true,processedCount:99,"
+    "payment_run_submitted:true,fatal_error:false}); "
+    "const result=JSON.stringify({status:'completed',payment_run_submitted:true,"
+    "processedCount:99,released:[],held:[],notes:'done'}); "
+    "fs.writeFileSync('/app/state.json', state); "
+    "fs.writeFileSync('/app/output/result.json', result)\""
 )
 
 # Each escape hatch is an independent attempt: on a hardened world it should be
