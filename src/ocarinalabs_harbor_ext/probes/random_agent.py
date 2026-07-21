@@ -63,36 +63,39 @@ const shuffle = <T>(xs: readonly T[]): T[] =>
 
 const callable = Object.entries(tools).filter(
   ([, v]) => typeof v === "function"
-) as [string, (a: unknown) => { isError?: boolean }][];
+) as [string, (a: unknown) => unknown][];
 
-// A single call with one arbitrary argument. A tool can reject bad args two
-// ways — by THROWING, or by returning `{ isError: true }` — and the sibling
-// probes (state_rewrite, ap_payment_double_payer) treat BOTH as a failed call
-// with no real tool activity behind it. callOnce follows that same convention:
-// it reports completion only when the body ran without throwing AND did not
-// return an isError result. A rejected call is not witnessed activity, so it
-// must not count toward coverage. Since the driver never writes the trajectory,
-// a throw here can't leave forged coverage behind either way.
-const callOnce = (
-  fn: (a: unknown) => { isError?: boolean } | undefined,
+// A single call with one arbitrary argument. A tool can reject bad args three
+// ways — by THROWING, by returning `{ isError: true }`, or (for an async tool)
+// by rejecting/resolving to `{ isError: true }` — and the sibling probes
+// (state_rewrite, ap_payment_double_payer) treat a thrown error or an isError
+// result as a failed call with no real tool activity behind it. callOnce
+// follows that convention and is async: it AWAITS the result (so an async tool
+// body actually runs and its post-await side effects/failures are observed
+// before we count it) and reports completion only when the body neither threw
+// nor yielded an isError result. A rejected call is not witnessed activity, so
+// it must not count toward coverage. Since the driver never writes the
+// trajectory, a throw here can't leave forged coverage behind either way.
+const callOnce = async (
+  fn: (a: unknown) => unknown,
   args: unknown,
-): boolean => {
+): Promise<boolean> => {
   try {
-    const result = fn(args);
+    const result = (await fn(args)) as { isError?: boolean } | undefined;
     return !(result && result.isError === true);
   } catch {
     return false;
   }
 };
 
-// Count only COMPLETED calls — a tool that threw on arbitrary args did no work
-// the host would witness, so counting the attempt would let the driver claim
-// activity it never produced.
+// Count only COMPLETED calls — a tool that threw or returned isError on
+// arbitrary args did no work the host would witness, so counting the attempt
+// would let the driver claim activity it never produced.
 let completed = 0;
 for (const [, fn] of shuffle(callable)) {
   const times = Math.floor(Math.random() * 3);
   for (let i = 0; i < times; i += 1) {
-    if (callOnce(fn, pick(grabBag))) completed += 1;
+    if (await callOnce(fn, pick(grabBag))) completed += 1;
   }
 }
 // Guarantee at least one COMPLETED tool call when the world exposes any tool:
@@ -107,7 +110,7 @@ for (const [, fn] of shuffle(callable)) {
 if (completed === 0 && callable.length > 0) {
   search: for (const [, fn] of callable) {
     for (const args of grabBag) {
-      if (callOnce(fn, args)) {
+      if (await callOnce(fn, args)) {
         completed += 1;
         break search;
       }

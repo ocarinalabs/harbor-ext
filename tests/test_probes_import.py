@@ -755,13 +755,26 @@ async def test_random_agent_counts_only_completed_tool_calls(tmp_path: Path):
     # guarantee sweeps every callable × every grab-bag arg to find one that runs.
     env = await _run(QuaverRandomAgent, tmp_path)
     issued = "\n".join(env.commands)
-    # callOnce returns a boolean and is only counted when truthy.
-    assert "): boolean =>" in issued
-    assert "if (callOnce(fn, pick(grabBag))) completed += 1;" in issued
+    # callOnce is async and returns a boolean; only awaited-truthy calls count.
+    assert "): Promise<boolean> =>" in issued
+    assert "if (await callOnce(fn, pick(grabBag))) completed += 1;" in issued
     # The guarantee tries multiple args, not a single arbitrary pick that a
     # strict tool could reject outright.
     assert "for (const args of grabBag)" in issued
     assert "__RANDOM_OK__ ${completed}" in issued
+
+
+async def test_random_agent_awaits_async_tool_results(tmp_path: Path):
+    # A world's tools may be async: `fn(args)` then returns a Promise. The driver
+    # must AWAIT it before counting, or an async isError rejection (and any
+    # post-await side effect/failure) is missed and the call is miscounted as
+    # completed — a vacuous floor. callOnce awaits the result and the loops await
+    # callOnce.
+    env = await _run(QuaverRandomAgent, tmp_path)
+    issued = "\n".join(env.commands)
+    assert "const callOnce = async (" in issued
+    assert "await fn(args)" in issued
+    assert "if (await callOnce(fn, args)) {" in issued
 
 
 async def test_random_agent_treats_iserror_returns_as_rejected_calls(tmp_path: Path):
