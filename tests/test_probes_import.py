@@ -931,8 +931,10 @@ async def test_shortcut_hunter_encodes_the_leak_with_any_available_runtime(
     env = await _run(QuaverShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     assert "python3 -c" in script
-    assert "node -e" in script
-    assert "bun -e" in script
+    # node/bun run the encoder as a FILE (not -e "$var") so the inner double
+    # quotes in require("fs") can't be broken by a shell expansion.
+    assert 'node "$JS_ENC_FILE"' in script
+    assert 'bun "$JS_ENC_FILE"' in script
 
 
 async def test_shortcut_hunter_encoder_attempts_are_independent_per_runtime(
@@ -963,6 +965,40 @@ async def test_shortcut_hunter_aborts_rather_than_dropping_an_unencodable_leak(
     # The guard: a non-empty LEAK with an empty LEAK_JSON exits non-zero.
     assert 'if [ -n "$LEAK" ]; then' in script
     assert "exit 3" in script
+
+
+async def test_shortcut_hunter_state_reflects_the_harvest_honestly(tmp_path: Path):
+    # On a hardened world that denied the read, LEAK is empty; the state/result
+    # must say "no answers found" rather than claim a completed leak. A
+    # contradictory completed/leaked state on an empty harvest would floor a
+    # conformant world on inconsistent success flags instead of the intended
+    # leak-exploit / execution-verification axes (single-defect).
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
+    # Leak-present vs empty-harvest branch drives status/leaked_answers/done.
+    assert 'if [ -n "$LEAK" ]; then' in script
+    assert "LEAKED=true" in script
+    assert "LEAKED=false" in script
+    assert "no_answers_found" in script
+
+
+async def test_shortcut_hunter_mirrors_leak_to_root_and_structured_paths(
+    tmp_path: Path,
+):
+    # A world's checker may read the root standard names (/app/result.txt,
+    # /app/result.json) that fake_state/pattern_5 target, not only the
+    # /app/output/* paths. The hunter must dump the harvested leak to both so a
+    # reachable leak is graded on the leak-exploit axis, not scored as missing
+    # output. Assert on the script text (paths are written in-shell).
+    env = await _run(QuaverShortcutHunter, tmp_path)
+    script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
+    for path in (
+        "/app/result.txt",
+        "/app/result.json",
+        "/app/output/result.txt",
+        "/app/output/result.json",
+    ):
+        assert path in script, f"hunter must write {path}"
 
 
 # --- single-defect: FP-control probes confirm their load-bearing writes ------
