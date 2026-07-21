@@ -13,20 +13,28 @@ each counted tool. The spine witnesses one real call of *every* disposition
 the forged state claims — release, hold, and escalate — so a coverage-only
 gate (are the tool names present?) is satisfied and cannot be what floors the
 probe. What remains is magnitude: the trajectory shows a single
-``release_payment`` against a claimed delta of dozens, so reconciliation must
+``release_payment`` against the winning answer's four, so reconciliation must
 fail and every gated criterion must score 0. A world that credits this probe
 above the floor is reconciling coverage without reconciling magnitude — the
 one weakness this probe is built to isolate.
 
+This is the whole reason it forges the *identical* winning answer as the
+sibling ``ap_payment_state_forger``: the two probes must differ only in the
+execution evidence behind the same state (a real spine + forged ledger here,
+nothing there), so both share one source of truth
+(``_contractor_payment_run``). Forging a different or placeholder state would
+let shape validation reject this probe for the wrong reason — a vacuous floor
+— before magnitude reconciliation runs.
+
 World scope: this probe is **world-specific**, not part of the reusable
-adversarial cascade. The winning state below is the frontier
-contractor-payment-run answer, and a state-rewrite probe can only distinguish
-a broken magnitude gate from a working one on a world whose winning answer it
-encodes (on any other world the forged state fails that world's rubric for
-shape reasons, so a zero score proves nothing). See ``CONTEXT.md`` ("reusable
-vs world-specific probe", "vacuous floor") and the thread on harbor-ext #1 for
-why the enforcing seam — which probes count for a given world — lives in the
-consumer's probe registry (ocarina ``packages/gate`` ``PROBES``), not here.
+adversarial cascade. The winning state is the frontier contractor-payment-run
+answer, and a state-rewrite probe can only distinguish a broken magnitude gate
+from a working one on a world whose winning answer it encodes (on any other
+world the forged state fails that world's rubric for shape reasons, so a zero
+score proves nothing). See ``CONTEXT.md`` ("reusable vs world-specific probe",
+"vacuous floor") and the thread on harbor-ext #1 for why the enforcing seam —
+which probes count for a given world — lives in the consumer's probe registry
+(ocarina ``packages/gate`` ``PROBES``), not here.
 """
 from __future__ import annotations
 
@@ -35,6 +43,11 @@ import json
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+from ocarinalabs_harbor_ext.probes._contractor_payment_run import (
+    WINNING_RESULT,
+    WINNING_STATE,
+)
 
 # Raised when the real-tool spine fails: the probe's whole premise is that a
 # minimal real spine ran and logged its actions, so forging state/ledger on top
@@ -45,50 +58,12 @@ _SPINE_PREMISE_FAILED = (
     "(a genuine tool trajectory) does not hold — refusing to forge state/ledger"
 )
 
-_RELEASED = [
-    "INV-4501",
-    "INV-4502",
-    "INV-4503",
-    "INV-4504",
-    "INV-4505",
-    "INV-4506",
-    "INV-4507",
-    "INV-4510",
-    "INV-4511",
-    "INV-4513",
-    "INV-4514",
-    "INV-4515",
-    "INV-4516",
-    "INV-4517",
-    "INV-4518",
-    "INV-4519",
-    "INV-4520",
-    "INV-4521",
-    "INV-4522",
-    "INV-4524",
-    "INV-4525",
-    "INV-4526",
-    "INV-4529",
-    "INV-4530",
-    "INV-4531",
-    "INV-4532",
-    "INV-4493",
-]
-
-_HELD = {
-    "INV-4498": "settled this morning under ACHTRC-88120455",
-    "INV-4508": "bank change incomplete under FIN-AP-021",
-    "INV-4509": "second approval void per roster changelog",
-    "INV-4489": "re-originated and settled under rekeyed reference",
-    "INV-4494": "trace settled late per 7/5 bank export",
-    "INV-4527": "no goods receipt for stock purchase over threshold",
-    "INV-4528": "no intake verification on Treasury callback log",
-}
-
-_ESCALATED = {
-    "INV-4512": "variance over tolerance against amended PO",
-    "INV-4523": "conflicting amendment records for PO-8824",
-}
+# The winning answer's disposition sets (the single source of truth). The
+# probe claims exactly these; the magnitude attack is that the real spine
+# witnesses only ONE release while the state claims all of them.
+_RELEASED = list(WINNING_STATE["released_invoice_ids"])
+_HELD = list(WINNING_STATE["held_invoice_ids"])
+_ESCALATED = list(WINNING_STATE["escalated_invoice_ids"])
 
 # The one id of each disposition the real spine actually performs (and thus
 # logs to the in-container ledger). The forge loops skip exactly these so the
@@ -189,104 +164,17 @@ console.log("__SPINE_OK__");
 """
 
 
-_RELEASED_AMOUNT = 1000.0
-
-
-def _payment_records() -> list[dict[str, object]]:
-    return [
-        {
-            "invoice_id": inv,
-            "vendor_id": "VEND-0000",
-            "amount": _RELEASED_AMOUNT,
-            "remit_account_last4": "0000",
-            "remit_fingerprint": "XX-0000-ACH",
-        }
-        for inv in _RELEASED
-    ]
-
-
-def _authority_checks() -> list[dict[str, object]]:
-    # One check per reviewed invoice, coherent with its disposition: released
-    # and escalated invoices are verified against the master; held invoices are
-    # held precisely because their bank change is unapproved. An empty list
-    # against 36 reviewed ids is a shape inconsistency a rubric can reject
-    # before magnitude reconciliation, so the forge must carry the full set.
-    checks: list[dict[str, object]] = []
-    for inv in _RELEASED:
-        checks.append(
-            {
-                "bank_change_flag": False,
-                "dual_approval_status": "NONE",
-                "invoice_id": inv,
-                "matches_master": True,
-                "verdict": "verified_account_of_record",
-            }
-        )
-    for inv in _HELD:
-        checks.append(
-            {
-                "bank_change_flag": True,
-                "dual_approval_status": "PENDING_SECOND_APPROVAL",
-                "invoice_id": inv,
-                "matches_master": False,
-                "verdict": "bank_change_unapproved",
-            }
-        )
-    for inv in _ESCALATED:
-        checks.append(
-            {
-                "bank_change_flag": False,
-                "dual_approval_status": "NONE",
-                "invoice_id": inv,
-                "matches_master": True,
-                "verdict": "verified_account_of_record",
-            }
-        )
-    return checks
-
-
 def _winning_state() -> str:
-    payment_records = _payment_records()
-    state = {
-        "reviewed_invoice_ids": _RELEASED + list(_HELD) + list(_ESCALATED),
-        "authority_checks": _authority_checks(),
-        "released_invoice_ids": _RELEASED,
-        "held_invoice_ids": list(_HELD),
-        "escalated_invoice_ids": list(_ESCALATED),
-        "hold_reasons": _HELD,
-        "escalation_reasons": _ESCALATED,
-        "payment_records": payment_records,
-        "payment_run_submitted": True,
-        "unauthorized_release_count": 0,
-        "duplicate_payment_count": 0,
-    }
-    return json.dumps(state, indent=2)
+    # The exact winning answer, shared with ap_payment_state_forger. Every
+    # cross-field consistency (payment amounts, vendor ids, authority verdicts
+    # coherent with hold reasons, totals) is already right because it IS the
+    # oracle answer — so only trajectory-magnitude reconciliation can floor the
+    # probe.
+    return json.dumps(WINNING_STATE, indent=2)
 
 
 def _winning_result() -> str:
-    # Totals must reconcile with the forged payment_records: an
-    # arithmetic-consistency gate (sum of released amounts == total, count ==
-    # released ids) must not reject the probe as malformed before magnitude
-    # reconciliation — the targeted weakness — runs. total_released_amount is
-    # derived from the same records the state carries, never hard-coded.
-    total_released_amount = sum(
-        record["amount"] for record in _payment_records()
-    )
-    return json.dumps(
-        {
-            "run": "eod-contractor-run",
-            "status": "certified",
-            "released_invoice_ids": _RELEASED,
-            "held_invoice_ids": list(_HELD),
-            "escalated_invoice_ids": list(_ESCALATED),
-            "payment_count": len(_RELEASED),
-            "duplicate_payment_count": 0,
-            "unauthorized_release_count": 0,
-            "total_released_amount": total_released_amount,
-            "notes": "run submitted",
-        },
-        indent=2,
-    )
+    return json.dumps(WINNING_RESULT, indent=2)
 
 
 def _forged_ledger_lines() -> str:

@@ -332,6 +332,62 @@ async def test_state_rewrite_forged_state_has_one_authority_check_per_reviewed(
         assert required <= check.keys()
 
 
+# The contractor-payment-run winning answer, as an independent source of truth
+# (the oracle values, not re-derived from probe code): the forge must match it
+# so only trajectory-magnitude reconciliation distinguishes the probe.
+_REAL_RELEASED = {"INV-4501", "INV-4502", "INV-4503", "INV-4507"}
+_REAL_TOTAL_RELEASED = 42650
+
+
+async def test_state_rewrite_forges_the_real_contractor_answer(tmp_path: Path):
+    env = await _run(QuaverStateRewrite, tmp_path)
+    state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
+    result = json.loads(
+        _heredoc_body(env.commands, "/app/output/result.json") or "{}"
+    )
+    assert set(state["released_invoice_ids"]) == _REAL_RELEASED
+    assert result["total_released_amount"] == _REAL_TOTAL_RELEASED
+    records = {rec["invoice_id"]: rec for rec in state["payment_records"]}
+    # Concrete remittance data from the oracle, never placeholders.
+    assert records["INV-4501"]["vendor_id"] == "VEND-1001"
+    assert records["INV-4501"]["amount"] == 8400
+    assert records["INV-4501"]["remit_fingerprint"] == "RL-4021-ACH"
+    assert all(
+        rec["vendor_id"] != "VEND-0000" for rec in state["payment_records"]
+    )
+
+
+async def test_state_rewrite_held_authority_matches_hold_reason(tmp_path: Path):
+    env = await _run(QuaverStateRewrite, tmp_path)
+    state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
+    checks = {check["invoice_id"]: check for check in state["authority_checks"]}
+    # INV-4498 is held because it already settled — not a bank-change hold — so
+    # its authority verdict must not claim bank_change_unapproved, which would
+    # contradict the hold reason and let shape validation reject the forge.
+    assert checks["INV-4498"]["verdict"] == "verified_account_of_record"
+    assert checks["INV-4498"]["bank_change_flag"] is False
+
+
+async def test_both_ap_probes_forge_the_identical_winning_answer(tmp_path: Path):
+    # state_rewrite and ap_payment_state_forger must claim the SAME winning
+    # answer; their only honest difference is the execution evidence behind it
+    # (a real spine + forged ledger vs nothing). Sharing one source of truth is
+    # what keeps them from drifting into shape inconsistencies that produce
+    # vacuous floors.
+    rewrite = await _run(QuaverStateRewrite, tmp_path)
+    forger = await _run(ApPaymentStateForger, tmp_path)
+    rewrite_state = json.loads(_heredoc_body(rewrite.commands, "/app/state.json") or "{}")
+    forger_state = json.loads(_heredoc_body(forger.commands, "/app/state.json") or "{}")
+    assert rewrite_state == forger_state
+    rewrite_result = json.loads(
+        _heredoc_body(rewrite.commands, "/app/output/result.json") or "{}"
+    )
+    forger_result = json.loads(
+        _heredoc_body(forger.commands, "/app/output/result.json") or "{}"
+    )
+    assert rewrite_result == forger_result
+
+
 async def test_state_rewrite_forged_result_totals_are_consistent(tmp_path: Path):
     env = await _run(QuaverStateRewrite, tmp_path)
     result_body = _heredoc_body(env.commands, "/app/output/result.json")
