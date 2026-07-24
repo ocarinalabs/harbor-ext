@@ -295,8 +295,8 @@ def test_double_payment_misses_the_world_state_when_run_elsewhere(tmp_path: Path
     stray = tmp_path / "stray"
     stray.mkdir()
     # Running from the wrong cwd writes state into the stray dir; the world's
-    # own state.json is never created — the exact false-negative finding 1 warns
-    # about, and the reason the probe must `cd /app`.
+    # own state.json is never created — the exact false-negative these tests
+    # guard against, and the reason the probe must `cd /app`.
     subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=stray,
