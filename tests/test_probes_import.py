@@ -593,7 +593,10 @@ async def test_state_rewrite_forged_result_totals_are_consistent(tmp_path: Path)
     # the released count.
     assert result["total_released_amount"] == released_total
     assert result["payment_count"] == len(state["released_invoice_ids"])
-    assert released_total > 0, "a zero total is the inconsistency finding 2 flags"
+    assert released_total > 0, (
+        "a zero total lets an arithmetic-consistency gate floor the probe "
+        "before magnitude reconciliation"
+    )
 
 
 # the real spine must witness every disposition it forges

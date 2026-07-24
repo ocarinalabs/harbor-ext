@@ -1,4 +1,4 @@
-"""Integration coverage for the double-payer's landing behavior (finding 1).
+"""Integration coverage for the double-payer's landing behavior.
 
 The seam tests in ``test_probes_import.py`` assert the probe *issues* a
 ``cd /app`` before running its script. This module proves *why* that matters:
