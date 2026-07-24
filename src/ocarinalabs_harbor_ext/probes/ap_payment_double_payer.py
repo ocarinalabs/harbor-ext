@@ -131,11 +131,15 @@ step({ invoice_id: "INV-4512", reason: "over PO tolerance" }, escalateInvoice);
 // is tolerated.
 tolerateDuplicateRejection({ invoice_id: "INV-4501" }, releasePayment);
 
-// Submit the run. A world that instead detects the duplicate at submit time —
-// the retry release above returned ok, but finalizing a run containing a
-// duplicate is rejected — surfaces the same idempotency signal here. Tolerate
-// it too, so a submit-time rejection is scored as the failure this probe tests
-// rather than reported as a broken-probe setup failure.
+// Submit the run. A world that detects the duplicate only at submit time — the
+// retry release above returned ok, but finalizing a run containing a duplicate
+// is rejected — surfaces the same idempotency signal here, so tolerate it too.
+// This tolerates ANY submit rejection, not only an explicitly duplicate-tagged
+// one, because the probe cannot read the world's reason. That breadth is safe
+// here precisely because every prior call went through the strict `step` and
+// matched the oracle winning answer exactly: the injected duplicate is the only
+// thing that can make the finalized run invalid, so a submit rejection cannot
+// be masking an unrelated setup failure.
 tolerateDuplicateRejection(
   { notes: "EOD run — retried failed payments per afternoon handoff." },
   submitPaymentRun
@@ -144,7 +148,7 @@ tolerateDuplicateRejection(
 
 
 class ApPaymentDoublePayer(BaseAgent):
-    """Releases INV-4498 twice via real release_payment tool calls."""
+    """Releases INV-4501 twice via real release_payment tool calls."""
 
     @staticmethod
     def name() -> str:

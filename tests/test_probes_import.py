@@ -689,6 +689,43 @@ async def test_state_rewrite_spine_performs_the_declared_ids(tmp_path: Path):
     assert _called_id("escalate_invoice") == sr._SPINE_ESCALATED
 
 
+async def test_state_rewrite_spine_reviews_each_disposed_invoice_before_acting(
+    tmp_path: Path,
+):
+    # A per-invoice coverage gate can require every disposed invoice to be
+    # reviewed (and its vendor verified) BEFORE its disposition. The spine must
+    # witness review -> verify -> disposition for each id it acts on, or the
+    # probe floors for a missing-review coverage reason on INV-4498 / INV-4512
+    # instead of the release-magnitude gap it isolates.
+    from ocarinalabs_harbor_ext.probes import state_rewrite as sr
+
+    env = await _run(QuaverStateRewrite, tmp_path)
+    script = "\n".join(env.commands)
+
+    def _call_pos(verb: str, invoice: str) -> int:
+        # Char offset of `call("<verb>", { invoice_id: "<invoice>"`, tolerant of
+        # the multi-line formatting hold/escalate use. -1 when absent.
+        match = re.search(
+            rf'call\(\s*"{verb}",\s*\{{\s*invoice_id:\s*"{invoice}"', script
+        )
+        return match.start() if match else -1
+
+    for verb, invoice in (
+        ("release_payment", sr._SPINE_RELEASED),
+        ("hold_payment", sr._SPINE_HELD),
+        ("escalate_invoice", sr._SPINE_ESCALATED),
+    ):
+        review = _call_pos("review_invoice", invoice)
+        verify = _call_pos("verify_vendor_account", invoice)
+        disposition = _call_pos(verb, invoice)
+        assert review != -1, f"spine must review {invoice} before {verb}"
+        assert verify != -1, f"spine must verify {invoice} before {verb}"
+        assert disposition != -1, f"spine must {verb} {invoice}"
+        assert review < verify < disposition, (
+            f"{invoice}: review -> verify -> {verb} order must hold"
+        )
+
+
 class _FailingSpineEnv(_RecordingEnv):
     """Records commands but reports the spine's bun run as a hard failure."""
 

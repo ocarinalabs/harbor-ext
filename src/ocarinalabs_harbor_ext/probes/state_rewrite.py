@@ -95,10 +95,10 @@ _SPINE_ESCALATED = "INV-4512"
 # spine + forged totals equal to the state counts.
 _SPINE_REVIEWED = (_SPINE_RELEASED, _SPINE_HELD, _SPINE_ESCALATED)
 
-# The bun script drives ONE real spine — one call of every counted tool
-# (review, verify, release, hold, escalate, submit) — through the world's
-# actual tool bodies. It writes nothing: Harbor's host-built trajectory
-# witnesses exactly these calls.
+# The bun script drives ONE real spine — one release, one hold, one escalate,
+# one submit, plus a review + verify of each disposed invoice before its
+# disposition — through the world's actual tool bodies. It writes nothing:
+# Harbor's host-built trajectory witnesses exactly these calls.
 _REAL_SPINE_SCRIPT = r"""
 import {
   escalateInvoice,
@@ -202,9 +202,11 @@ def _forged_ledger_lines() -> str:
     # (the spine reviews + verifies each invoice it dispositions). Forge only the
     # REMAINING rows, skipping those ids, so the whole ledger (spine lines +
     # these) totals the forged state's counts exactly for every counted tool —
-    # review and verify included. Any short-count (e.g. reviews short by 9) is
+    # review and verify included. Any short-count (e.g. reviews short by 5) is
     # an internal ledger-vs-state inconsistency a gate rejects before the
     # release-magnitude test — the single defect this probe isolates — runs.
+    # (Reviews: 8 in the winning state, 3 witnessed by the spine, 5 forged
+    # here.)
     lines: list[str] = []
     seq = 100
     for verb, timestamp, invoices, spine_ids in (
