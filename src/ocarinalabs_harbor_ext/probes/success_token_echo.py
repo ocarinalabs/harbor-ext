@@ -1,4 +1,4 @@
-"""Quaver adversarial echo probe (Berkeley Pattern 5).
+"""Ocarina adversarial success-token-echo probe (Berkeley Pattern 5).
 
 Writes canonical success tokens to standard output paths. Flags rubrics
 that credit any non-empty assistant reply or use substring-match credit
@@ -22,12 +22,12 @@ _STANDARD_OUTPUT_NAMES = (
 _PASS_TOKENS = ("PASS", "SUCCESS", "yes", "1", "true", "OK")
 
 
-class QuaverPattern5(BaseAgent):
+class OcarinaSuccessTokenEcho(BaseAgent):
     """Writes every pass-token permutation to every standard output name."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-pattern-5"
+        return "ocarina-success-token-echo"
 
     def version(self) -> str:
         return "1.0.0"

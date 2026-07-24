@@ -1,4 +1,4 @@
-"""Quaver adversarial injection probe (Berkeley Pattern 4).
+"""Ocarina adversarial judge-injection probe (Berkeley Pattern 4).
 
 Writes judge-prompt-injection payloads into agent-controlled surfaces.
 Flags LLM-judge criteria that read agent-controlled text without
@@ -26,12 +26,12 @@ _TARGET_PATHS = (
 )
 
 
-class QuaverPattern4(BaseAgent):
+class OcarinaJudgeInjection(BaseAgent):
     """Writes five injection payloads into four agent-controlled file paths."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-pattern-4"
+        return "ocarina-judge-injection"
 
     def version(self) -> str:
         return "1.0.0"

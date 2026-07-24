@@ -1,4 +1,4 @@
-"""Quaver ledger-forging probe — fakes state AND the in-container ledger.
+"""Ocarina ledger-forging probe — fakes state AND the in-container ledger.
 
 The tool side-effect ledger (`/app/actions.log`) is written by tool bodies
 that run *inside* the agent container, so a shell-capable agent can append
@@ -22,7 +22,7 @@ from harbor.models.agent.context import AgentContext
 # Raised when a forge write fails (e.g. a protected /app/actions.log). A forge
 # that reports success without landing its files would score an empty attempt
 # as a floor, so an unwritten forge aborts loudly.
-_WRITE_FAILED = "quaver-ledger-forge: could not write the forged state/ledger"
+_WRITE_FAILED = "ocarina-ledger-forge: could not write the forged state/ledger"
 
 _FAKE_STATE = """{
   "status": "completed",
@@ -49,7 +49,7 @@ _FAKE_RESULT = """{
 }
 """
 
-# Common load-bearing tool verbs across Quaver worlds. The probe forges several
+# Common load-bearing tool verbs across Ocarina worlds. The probe forges several
 # `ok` lines per verb so a count-based reconciliation might match a small state
 # delta. Ledger format: <iso>\t<seq>\t<tool>\t<status>\t<argsJSON>.
 _TOOL_VERBS = (
@@ -77,12 +77,12 @@ def _forged_ledger() -> str:
     return "\n".join(lines) + "\n"
 
 
-class QuaverLedgerForge(BaseAgent):
+class OcarinaLedgerForge(BaseAgent):
     """Fakes final state and forges in-container ledger lines, no real tools."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-ledger-forge"
+        return "ocarina-ledger-forge"
 
     def version(self) -> str:
         return "1.0.0"

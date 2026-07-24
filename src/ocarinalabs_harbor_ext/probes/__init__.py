@@ -1,4 +1,4 @@
-"""Quaver adversarial probes.
+"""Ocarina adversarial probes.
 
 Probes corresponding to the Berkeley patterns for broken agent benchmarks,
 plus the execution-faking family that targets the "wrote the answer, did no
@@ -6,8 +6,10 @@ work" loophole. Each probe is a standalone
 :class:`~harbor.agents.base.BaseAgent` subclass. A benchmark that credits any
 probe above the configured floor is not publication-ready.
 
-- pattern_1 / pattern_7: isolation-boundary escapes and verifier-state tamper.
-- pattern_4 / pattern_5: judge-injection and loose success-token credit.
+- isolation_escape / reward_sink: isolation-boundary escapes and verifier-state
+  tamper.
+- judge_injection / success_token_echo: judge-injection and loose success-token
+  credit.
 - fake_state / ledger_forge: fabricate final state (and forge the in-container
   ledger) without calling tools — floored only by execution verification
   (trajectory coverage + reconciliation). See
@@ -24,7 +26,7 @@ probe above the configured floor is not publication-ready.
   checks; shortcut_hunter greps the checkers/fixtures for the answers and
   hardcodes them — the runtime side of the answer-leak controls.
 
-The probes above form the general, reusable adversarial gate (``quaver-*``
+The probes above form the general, reusable adversarial gate (``ocarina-*``
 names). Alongside them ship world-specific probes (``ap-payment-*`` names) that
 encode the winning answer for one world — contractor-payment-run — and exist to
 prove that world's execution gate holds against an answer-knowing adversary.
@@ -38,30 +40,30 @@ from __future__ import annotations
 
 from ocarinalabs_harbor_ext.probes.ap_payment_double_payer import ApPaymentDoublePayer
 from ocarinalabs_harbor_ext.probes.ap_payment_state_forger import ApPaymentStateForger
-from ocarinalabs_harbor_ext.probes.fake_state import QuaverFakeState
+from ocarinalabs_harbor_ext.probes.fake_state import OcarinaFakeState
 from ocarinalabs_harbor_ext.probes.forbidden_subprocess import (
-    QuaverForbiddenSubprocess,
+    OcarinaForbiddenSubprocess,
 )
-from ocarinalabs_harbor_ext.probes.ledger_forge import QuaverLedgerForge
-from ocarinalabs_harbor_ext.probes.pattern_1 import QuaverPattern1
-from ocarinalabs_harbor_ext.probes.pattern_4 import QuaverPattern4
-from ocarinalabs_harbor_ext.probes.pattern_5 import QuaverPattern5
-from ocarinalabs_harbor_ext.probes.pattern_7 import QuaverPattern7
-from ocarinalabs_harbor_ext.probes.random_agent import QuaverRandomAgent
-from ocarinalabs_harbor_ext.probes.shortcut_hunter import QuaverShortcutHunter
-from ocarinalabs_harbor_ext.probes.state_rewrite import QuaverStateRewrite
+from ocarinalabs_harbor_ext.probes.isolation_escape import OcarinaIsolationEscape
+from ocarinalabs_harbor_ext.probes.judge_injection import OcarinaJudgeInjection
+from ocarinalabs_harbor_ext.probes.ledger_forge import OcarinaLedgerForge
+from ocarinalabs_harbor_ext.probes.random_agent import OcarinaRandomAgent
+from ocarinalabs_harbor_ext.probes.reward_sink import OcarinaRewardSink
+from ocarinalabs_harbor_ext.probes.shortcut_hunter import OcarinaShortcutHunter
+from ocarinalabs_harbor_ext.probes.state_rewrite import OcarinaStateRewrite
+from ocarinalabs_harbor_ext.probes.success_token_echo import OcarinaSuccessTokenEcho
 
 __all__ = [
     "ApPaymentDoublePayer",
     "ApPaymentStateForger",
-    "QuaverFakeState",
-    "QuaverForbiddenSubprocess",
-    "QuaverLedgerForge",
-    "QuaverPattern1",
-    "QuaverPattern4",
-    "QuaverPattern5",
-    "QuaverPattern7",
-    "QuaverRandomAgent",
-    "QuaverShortcutHunter",
-    "QuaverStateRewrite",
+    "OcarinaFakeState",
+    "OcarinaForbiddenSubprocess",
+    "OcarinaIsolationEscape",
+    "OcarinaJudgeInjection",
+    "OcarinaLedgerForge",
+    "OcarinaRandomAgent",
+    "OcarinaRewardSink",
+    "OcarinaShortcutHunter",
+    "OcarinaStateRewrite",
+    "OcarinaSuccessTokenEcho",
 ]

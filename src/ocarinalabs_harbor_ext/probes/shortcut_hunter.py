@@ -1,4 +1,4 @@
-"""Quaver shortcut-hunter probe — the anti-answer-leak control.
+"""Ocarina shortcut-hunter probe — the anti-answer-leak control.
 
 Searches every location the agent can read — the rubric checkers under
 ``/tests``, bundled fixtures, and any ``*.gold*`` / ``answer*`` / ``solution*``
@@ -35,7 +35,7 @@ from harbor.models.agent.context import AgentContext
 # empty run as a floor for the wrong reason (nothing to grade) rather than the
 # intended one (leaked answer present but not credited) — a vacuous floor. An
 # unwritten harvest aborts loudly, matching the execution-faking family.
-_WRITE_FAILED = "quaver-shortcut-hunter: could not write the harvested answer"
+_WRITE_FAILED = "ocarina-shortcut-hunter: could not write the harvested answer"
 
 # The search is best-effort under `set +e` (grep/find/cat may legitimately find
 # nothing on a hardened world). The WRITES that follow are the load-bearing
@@ -90,7 +90,7 @@ fi
 # and every JSON encoder attempt came up empty (single-defect).
 if [ -z "$LEAK_JSON" ]; then
   if [ -n "$LEAK" ]; then
-    echo "quaver-shortcut-hunter: harvested a leak but no JSON encoder succeeded" >&2
+    echo "ocarina-shortcut-hunter: harvested a leak but no JSON encoder succeeded" >&2
     exit 3
   fi
   LEAK_JSON='""'
@@ -134,7 +134,7 @@ else
   LEAKED=false; STATUS=no_answers_found; DONE=false
 fi
 # Hardcode the answer across the FULL set of flat standard output names the
-# family recognizes (identical to pattern_5's _STANDARD_OUTPUT_NAMES), at BOTH
+# family recognizes (identical to success_token_echo's _STANDARD_OUTPUT_NAMES), at BOTH
 # /app and /app/output. When a candidate literal was extracted, write it EXACTLY
 # (no trailing newline) so an exact-equality grader (`out == "ABC123"`) matches
 # — and since the literal is also a substring of itself, substring/content-scan
@@ -185,12 +185,12 @@ done
 """
 
 
-class QuaverShortcutHunter(BaseAgent):
+class OcarinaShortcutHunter(BaseAgent):
     """Greps the checkers/fixtures for answers and hardcodes them."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-shortcut-hunter"
+        return "ocarina-shortcut-hunter"
 
     def version(self) -> str:
         return "1.0.0"

@@ -1,4 +1,4 @@
-"""Quaver state-rewriting probe — partial real work, then a perfect fake finish.
+"""Ocarina state-rewriting probe — partial real work, then a perfect fake finish.
 
 The strongest remaining attack on the execution gate: an agent that drives a
 few REAL tools through the runtime (so the host-built trajectory legitimately
@@ -54,7 +54,7 @@ from ocarinalabs_harbor_ext.probes._contractor_payment_run import (
 # of a failed spine would make the probe fail for the wrong reason. Abort loudly
 # instead. "refusing to forge" is the stable phrase tests and operators match.
 _SPINE_PREMISE_FAILED = (
-    "quaver-state-rewrite: the real-tool spine failed, so its premise "
+    "ocarina-state-rewrite: the real-tool spine failed, so its premise "
     "(a genuine tool trajectory) does not hold — refusing to forge state/ledger"
 )
 
@@ -64,7 +64,7 @@ _SPINE_PREMISE_FAILED = (
 # so an incomplete forge aborts loudly rather than reporting. "incomplete forge"
 # is the stable phrase tests and operators match.
 _FORGE_INCOMPLETE = (
-    "quaver-state-rewrite: a forge write failed — incomplete forge would leave "
+    "ocarina-state-rewrite: a forge write failed — incomplete forge would leave "
     "partial evidence, aborting so the probe cannot floor for the wrong reason"
 )
 
@@ -236,12 +236,12 @@ def _forged_ledger_lines() -> str:
     return "\n".join(lines) + "\n"
 
 
-class QuaverStateRewrite(BaseAgent):
+class OcarinaStateRewrite(BaseAgent):
     """Real minimal tool spine, then rewrites final state + forges the ledger."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-state-rewrite"
+        return "ocarina-state-rewrite"
 
     def version(self) -> str:
         return "1.0.0"

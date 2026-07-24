@@ -4,12 +4,12 @@ Adversarial probes for benchmark integrity, packaged for stock Harbor.
 
 Import probes directly:
 
-    from ocarinalabs_harbor_ext.probes import QuaverPattern1
+    from ocarinalabs_harbor_ext.probes import OcarinaIsolationEscape
 
-Or load via Harbor's ``--agent-import-path`` mechanism:
+Or load via Harbor's unified ``--agent`` mechanism:
 
     harbor run <world> \\
-      --agent-import-path ocarinalabs_harbor_ext.probes.pattern_1:QuaverPattern1
+      --agent ocarinalabs_harbor_ext.probes.isolation_escape:OcarinaIsolationEscape
 """
 from __future__ import annotations
 
