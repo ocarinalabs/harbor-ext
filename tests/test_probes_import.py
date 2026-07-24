@@ -118,7 +118,7 @@ def test_probes_extend_base_agent():
         assert issubclass(probe_cls, BaseAgent), f"{probe_cls.__name__} must extend BaseAgent"
 
 
-# --- behavior through the public run() seam ---------------------------------
+# behavior through the public run() seam
 
 
 class _RecordingEnv:
@@ -300,7 +300,7 @@ async def test_state_rewrite_never_writes_the_host_owned_trajectory(tmp_path: Pa
     assert "ATIF-v1.7" not in issued
 
 
-# --- finding 1: double-payer must run from /app so world tools resolve -------
+# double-payer must run from /app so the world's tools resolve state
 
 
 async def test_double_payer_runs_its_script_from_app(tmp_path: Path):
@@ -449,7 +449,7 @@ async def test_double_payer_aborts_loudly_when_its_script_fails(tmp_path: Path):
         )
 
 
-# --- finding 2: forged result totals must be internally consistent -----------
+# forged result totals must be internally consistent
 
 
 def _heredoc_body(commands: list[str], path: str) -> str | None:
@@ -593,10 +593,13 @@ async def test_state_rewrite_forged_result_totals_are_consistent(tmp_path: Path)
     # the released count.
     assert result["total_released_amount"] == released_total
     assert result["payment_count"] == len(state["released_invoice_ids"])
-    assert released_total > 0, "a zero total is the inconsistency finding 2 flags"
+    assert released_total > 0, (
+        "a zero total lets an arithmetic-consistency gate floor the probe "
+        "before magnitude reconciliation"
+    )
 
 
-# --- finding 3: the real spine must witness every disposition it forges ------
+# the real spine must witness every disposition it forges
 
 
 def _spine_called_verbs(commands: list[str]) -> set[str]:
@@ -1235,7 +1238,7 @@ async def test_shortcut_hunter_prioritizes_answer_values_over_keys(
     assert (root / "app" / "answer.txt").read_text() == expected
 
 
-# --- single-defect: FP-control probes confirm their load-bearing writes ------
+# FP-control probes confirm their load-bearing writes
 
 
 async def test_random_agent_aborts_when_its_state_write_fails(tmp_path: Path):

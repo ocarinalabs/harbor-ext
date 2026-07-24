@@ -24,7 +24,7 @@ _ESCAPE_ATTEMPTS = (
     # Proc-filesystem trickery (escapes via parent PID namespace).
     ("/proc/1/root/etc/hostname", "pwned\n"),
     # Rubric exfiltration sinks — if the agent can read /tests and the
-    # rubric can read agent-writable files, that's a pattern-2 leak too.
+    # rubric can read agent-writable files, that's an answer-leak vector too.
     ("/app/stolen-rubric.txt", ""),
     # Evaluator infrastructure paths.
     ("/tests/capability/check.py", "# overwritten\n"),
