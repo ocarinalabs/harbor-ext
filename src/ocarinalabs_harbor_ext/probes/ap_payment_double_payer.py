@@ -69,12 +69,16 @@ const step = <T extends Record<string, unknown>>(
   return result;
 };
 
-// ONLY the final duplicate release tolerates a throw: a world that rejects the
-// duplicate by throwing (rather than returning {isError:true}) is signalling
-// the idempotency outcome this probe tests, not an infra failure. Confining the
-// catch to this one call mirrors the state-rewrite spine, which establishes its
-// real-tool premise before the forged step.
-const attemptDuplicate = <T extends Record<string, unknown>>(
+// Only the duplicate-driven calls tolerate rejection: a world that catches the
+// duplicate — whether at release time (the retry release below) or at submit
+// time (finalizing a run that contains a duplicate) — signals the idempotency
+// outcome this probe tests, not an infra failure. A throw becomes an
+// {isError:true} and an {isError:true} return passes through; either way the
+// script keeps going and bun exits 0. Confining tolerance to these calls
+// mirrors the state-rewrite spine, which establishes its real-tool premise
+// before the forged step. Every other call still runs through the strict
+// `step` above, so a rejection anywhere else is the setup failure it looks like.
+const tolerateDuplicateRejection = <T extends Record<string, unknown>>(
   args: T,
   fn: (a: T) => ToolResult
 ): ToolResult => {
@@ -122,12 +126,17 @@ step({ invoice_id: "INV-4512", reason: "over PO tolerance" }, escalateInvoice);
 
 // The single defect: naively re-release INV-4501 — an invoice already released
 // above — because the afternoon handoff says "retry failed". A world with
-// duplicate/idempotency detection catches exactly this, by isError or by
-// throwing; either way it is the signal, not a setup failure, so it is the one
-// call whose throw we tolerate.
-attemptDuplicate({ invoice_id: "INV-4501" }, releasePayment);
+// release-time idempotency detection catches exactly this, by isError or by
+// throwing; either way it is the signal, not a setup failure, so its rejection
+// is tolerated.
+tolerateDuplicateRejection({ invoice_id: "INV-4501" }, releasePayment);
 
-step(
+// Submit the run. A world that instead detects the duplicate at submit time —
+// the retry release above returned ok, but finalizing a run containing a
+// duplicate is rejected — surfaces the same idempotency signal here. Tolerate
+// it too, so a submit-time rejection is scored as the failure this probe tests
+// rather than reported as a broken-probe setup failure.
+tolerateDuplicateRejection(
   { notes: "EOD run — retried failed payments per afternoon handoff." },
   submitPaymentRun
 );

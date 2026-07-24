@@ -104,6 +104,33 @@ _DUPLICATE_REJECTING_TOOLS = _STUB_TOOLS_LIB.replace(
     "  return {};",
 )
 
+# A world that ALLOWS the duplicate release (no release-time idempotency check)
+# but rejects the run at SUBMIT time by throwing, because the finalized run
+# contains a duplicate payment. This is the same idempotency signal caught one
+# step later, so the probe must tolerate the submit throw, not report it as a
+# broken-setup failure.
+_SUBMIT_TIME_THROW_TOOLS = _STUB_TOOLS_LIB.replace(
+    "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => ({});",
+    "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => {\n"
+    "  const s = load();\n"
+    "  if (s.duplicate_payment_count > 0) {\n"
+    '    throw new Error("payment run contains a duplicate payment");\n'
+    "  }\n"
+    "  return {};\n};",
+)
+
+# Same submit-time detection, signalled by VALUE ({isError:true}) instead of a
+# throw — still the idempotency signal, still tolerated.
+_SUBMIT_TIME_ISERROR_TOOLS = _STUB_TOOLS_LIB.replace(
+    "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => ({});",
+    "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => {\n"
+    "  const s = load();\n"
+    "  if (s.duplicate_payment_count > 0) {\n"
+    "    return { isError: true };\n"
+    "  }\n"
+    "  return {};\n};",
+)
+
 
 def _write_world(root: Path, tools_lib: str = _STUB_TOOLS_LIB) -> None:
     root.mkdir(parents=True, exist_ok=True)
@@ -188,6 +215,46 @@ def test_double_payer_tolerates_only_the_duplicate_rejection(tmp_path: Path) -> 
     state = json.loads((world / "state.json").read_text())
     # The first (oracle-path) release landed; the duplicate was rejected.
     assert state["released"].count("INV-4501") == 1
+
+
+def test_double_payer_tolerates_submit_time_duplicate_rejection(tmp_path: Path) -> None:
+    world = tmp_path / "app"
+    _write_world(world, tools_lib=_SUBMIT_TIME_THROW_TOOLS)
+    # A world with no release-time idempotency check can still catch the
+    # duplicate when the run is submitted. That submit rejection is the same
+    # idempotency signal as a release-time one — not a setup failure — so the
+    # script must complete and bun must exit 0.
+    result = subprocess.run(
+        ["bun", "run", str(world / "double-payer.ts")],
+        cwd=world,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"a submit-time duplicate rejection must not abort; stderr: {result.stderr}"
+    )
+    state = json.loads((world / "state.json").read_text())
+    # The duplicate release landed (no release-time detection here); the world
+    # only surfaces it at submit, which is exactly what this probe must let
+    # count as the failure signal.
+    assert state["duplicate_payment_count"] == 1
+    assert state["released"].count("INV-4501") == 2
+
+
+def test_double_payer_tolerates_submit_time_iserror_rejection(tmp_path: Path) -> None:
+    world = tmp_path / "app"
+    _write_world(world, tools_lib=_SUBMIT_TIME_ISERROR_TOOLS)
+    # Submit-time detection signalled by value ({isError:true}) rather than a
+    # throw is still the idempotency signal and must be tolerated.
+    result = subprocess.run(
+        ["bun", "run", str(world / "double-payer.ts")],
+        cwd=world,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"a submit-time isError rejection must not abort; stderr: {result.stderr}"
+    )
 
 
 def test_double_payment_misses_the_world_state_when_run_elsewhere(tmp_path: Path) -> None:
