@@ -28,33 +28,33 @@ from harbor.models.agent.context import AgentContext
 from ocarinalabs_harbor_ext.probes import (
     ApPaymentDoublePayer,
     ApPaymentStateForger,
-    QuaverFakeState,
-    QuaverForbiddenSubprocess,
-    QuaverLedgerForge,
-    QuaverPattern1,
-    QuaverPattern4,
-    QuaverPattern5,
-    QuaverPattern7,
-    QuaverRandomAgent,
-    QuaverShortcutHunter,
-    QuaverStateRewrite,
+    OcarinaFakeState,
+    OcarinaForbiddenSubprocess,
+    OcarinaIsolationEscape,
+    OcarinaJudgeInjection,
+    OcarinaLedgerForge,
+    OcarinaRandomAgent,
+    OcarinaRewardSink,
+    OcarinaShortcutHunter,
+    OcarinaStateRewrite,
+    OcarinaSuccessTokenEcho,
 )
 
 # The general, reusable adversarial gate: the Berkeley patterns, the
 # execution-faking family, and the false-positive controls. These carry the
-# `quaver-` name prefix and are the probes the ocarina validation gate loads by
+# `ocarina-` name prefix and are the probes the ocarina validation gate loads by
 # submodule path.
 _GATE_PROBES = [
-    QuaverPattern1,
-    QuaverPattern4,
-    QuaverPattern5,
-    QuaverPattern7,
-    QuaverFakeState,
-    QuaverLedgerForge,
-    QuaverStateRewrite,
-    QuaverRandomAgent,
-    QuaverForbiddenSubprocess,
-    QuaverShortcutHunter,
+    OcarinaIsolationEscape,
+    OcarinaJudgeInjection,
+    OcarinaSuccessTokenEcho,
+    OcarinaRewardSink,
+    OcarinaFakeState,
+    OcarinaLedgerForge,
+    OcarinaStateRewrite,
+    OcarinaRandomAgent,
+    OcarinaForbiddenSubprocess,
+    OcarinaShortcutHunter,
 ]
 # World-specific probes (contractor-payment-run). Loaded ad hoc by submodule
 # path during world hardening, not part of the general cascade; they carry an
@@ -74,8 +74,8 @@ def test_probe_has_slug_name(probe_cls):
 
 
 @pytest.mark.parametrize("probe_cls", _GATE_PROBES)
-def test_gate_probe_carries_quaver_prefix(probe_cls):
-    assert probe_cls.name().startswith("quaver-")
+def test_gate_probe_carries_ocarina_prefix(probe_cls):
+    assert probe_cls.name().startswith("ocarina-")
 
 
 @pytest.mark.parametrize("probe_cls", _WORLD_PROBES)
@@ -96,16 +96,16 @@ def test_probe_names_are_unique():
     names = {p.name() for p in _ALL_PROBES}
     assert len(names) == len(_ALL_PROBES)
     assert names == {
-        "quaver-pattern-1",
-        "quaver-pattern-4",
-        "quaver-pattern-5",
-        "quaver-pattern-7",
-        "quaver-fake-state",
-        "quaver-ledger-forge",
-        "quaver-state-rewrite",
-        "quaver-random-agent",
-        "quaver-forbidden-subprocess",
-        "quaver-shortcut-hunter",
+        "ocarina-isolation-escape",
+        "ocarina-judge-injection",
+        "ocarina-success-token-echo",
+        "ocarina-reward-sink",
+        "ocarina-fake-state",
+        "ocarina-ledger-forge",
+        "ocarina-state-rewrite",
+        "ocarina-random-agent",
+        "ocarina-forbidden-subprocess",
+        "ocarina-shortcut-hunter",
         "ap-payment-double-payer",
         "ap-payment-state-forger",
     }
@@ -168,8 +168,8 @@ async def _run(probe_cls, tmp_path: Path) -> _RecordingEnv:
     return env
 
 
-async def test_pattern_7_tampers_agent_trajectory_not_the_retired_path(tmp_path: Path):
-    env = await _run(QuaverPattern7, tmp_path)
+async def test_reward_sink_tampers_agent_trajectory_not_the_retired_path(tmp_path: Path):
+    env = await _run(OcarinaRewardSink, tmp_path)
     written = _redirect_targets(env.commands)
     # The ATIF trajectory now lives at /logs/agent/; the pre-1.7 /logs path is
     # retired and must not be targeted, or the probe tests a dead location.
@@ -184,12 +184,12 @@ async def test_pattern_7_tampers_agent_trajectory_not_the_retired_path(tmp_path:
     # where Harbor has not pre-created /logs/agent, a bare `cat >` dies on "no
     # such file" and the probe never tests the isolation boundary it exists for.
     assert re.search(r"mkdir -p .*/logs/agent", trajectory_cmd), (
-        "pattern-7 must mkdir the trajectory parent before writing"
+        "reward-sink must mkdir the trajectory parent before writing"
     )
 
 
-async def test_pattern_7_creates_every_tamper_target_parent_dir(tmp_path: Path):
-    env = await _run(QuaverPattern7, tmp_path)
+async def test_reward_sink_creates_every_tamper_target_parent_dir(tmp_path: Path):
+    env = await _run(OcarinaRewardSink, tmp_path)
     for path in (
         "/logs/verifier/reward.txt",
         "/logs/verifier/reward.json",
@@ -197,12 +197,12 @@ async def test_pattern_7_creates_every_tamper_target_parent_dir(tmp_path: Path):
         "/tests/test.sh",
     ):
         cmd = _command_writing(env.commands, path)
-        assert cmd is not None, f"pattern-7 must attempt {path}"
-        assert "mkdir -p" in cmd, f"pattern-7 must mkdir the parent of {path}"
+        assert cmd is not None, f"reward-sink must attempt {path}"
+        assert "mkdir -p" in cmd, f"reward-sink must mkdir the parent of {path}"
 
 
 async def test_fake_state_writes_success_state_with_no_tool_calls(tmp_path: Path):
-    env = await _run(QuaverFakeState, tmp_path)
+    env = await _run(OcarinaFakeState, tmp_path)
     written = _redirect_targets(env.commands)
     assert "/app/state.json" in written
     assert "/app/output/result.json" in written
@@ -212,7 +212,7 @@ async def test_fake_state_writes_success_state_with_no_tool_calls(tmp_path: Path
 
 
 async def test_ledger_forge_writes_state_and_a_well_formed_ok_ledger(tmp_path: Path):
-    env = await _run(QuaverLedgerForge, tmp_path)
+    env = await _run(OcarinaLedgerForge, tmp_path)
     written = _redirect_targets(env.commands)
     assert "/app/state.json" in written
     assert "/app/actions.log" in written
@@ -226,7 +226,7 @@ async def test_ledger_forge_writes_state_and_a_well_formed_ok_ledger(tmp_path: P
 async def test_ledger_forge_result_payload_is_result_shaped_not_the_state_blob(
     tmp_path: Path,
 ):
-    env = await _run(QuaverLedgerForge, tmp_path)
+    env = await _run(OcarinaLedgerForge, tmp_path)
     state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
     result = json.loads(
         _heredoc_body(env.commands, "/app/output/result.json") or "{}"
@@ -247,8 +247,8 @@ async def test_faker_probes_report_only_writes_that_landed(tmp_path: Path):
     # echo whose exit 0 masks a failed cat (e.g. a protected path). A failed
     # write aborts loudly so the run cannot score an empty fake as a floor.
     for probe_cls, failing_fragment in (
-        (QuaverFakeState, "cat > /app/state.json"),
-        (QuaverLedgerForge, "cat > /app/actions.log"),
+        (OcarinaFakeState, "cat > /app/state.json"),
+        (OcarinaLedgerForge, "cat > /app/actions.log"),
         (ApPaymentStateForger, "cat > /app/state.json"),
     ):
         env = _FailingRunEnv(failing_fragment)
@@ -261,7 +261,7 @@ async def test_faker_probes_report_only_writes_that_landed(tmp_path: Path):
 async def test_faker_probes_do_not_use_echo_success_markers(tmp_path: Path):
     # The trailing `echo __*_OK__` idiom masks a failed heredoc cat; none of the
     # faker probes may rely on it. Success is the write's own exit status.
-    for probe_cls in (QuaverFakeState, QuaverLedgerForge, ApPaymentStateForger):
+    for probe_cls in (OcarinaFakeState, OcarinaLedgerForge, ApPaymentStateForger):
         env = await _run(probe_cls, tmp_path)
         issued = "\n".join(env.commands)
         assert "__FAKE_OK__" not in issued
@@ -269,7 +269,7 @@ async def test_faker_probes_do_not_use_echo_success_markers(tmp_path: Path):
 
 
 async def test_state_rewrite_runs_real_spine_then_forges_state_and_ledger(tmp_path: Path):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     written = _redirect_targets(env.commands)
     # The perfect fake finish: winning state plus an APPENDED forged ledger.
     assert "/app/state.json" in written
@@ -284,7 +284,7 @@ async def test_state_rewrite_runs_real_spine_then_forges_state_and_ledger(tmp_pa
 
 
 async def test_state_rewrite_never_writes_the_host_owned_trajectory(tmp_path: Path):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     issued = "\n".join(env.commands)
     # /logs/agent/trajectory.json is host-built (docs/design/execution-
     # verification.md): the agent cannot forge it, and a correctly hardened
@@ -341,7 +341,7 @@ async def test_double_payer_chains_script_write_before_running_it(tmp_path: Path
 
 
 async def test_state_rewrite_chains_spine_write_before_running_it(tmp_path: Path):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     run_cmd = next(
         (cmd for cmd in env.commands if "bun run /tmp/rw-spine.ts" in cmd), None
     )
@@ -468,7 +468,7 @@ def _heredoc_body(commands: list[str], path: str) -> str | None:
 async def test_state_rewrite_forged_state_has_one_authority_check_per_reviewed(
     tmp_path: Path,
 ):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
     reviewed = state["reviewed_invoice_ids"]
     checks = state["authority_checks"]
@@ -497,7 +497,7 @@ _REAL_TOTAL_RELEASED = 42650
 
 
 async def test_state_rewrite_forges_the_real_contractor_answer(tmp_path: Path):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
     result = json.loads(
         _heredoc_body(env.commands, "/app/output/result.json") or "{}"
@@ -515,7 +515,7 @@ async def test_state_rewrite_forges_the_real_contractor_answer(tmp_path: Path):
 
 
 async def test_state_rewrite_held_authority_matches_hold_reason(tmp_path: Path):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
     checks = {check["invoice_id"]: check for check in state["authority_checks"]}
     # INV-4498 is held because it already settled — not a bank-change hold — so
@@ -541,7 +541,7 @@ def test_winning_result_notes_is_benign_not_forged():
 async def test_state_rewrite_forged_hold_rows_carry_the_hold_reason(tmp_path: Path):
     from ocarinalabs_harbor_ext.probes._contractor_payment_run import WINNING_STATE
 
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     hold_rows = [
         json.loads(cols[4])
         for cols in _ok_ledger_rows(env.commands)
@@ -562,7 +562,7 @@ async def test_both_ap_probes_forge_the_identical_winning_answer(tmp_path: Path)
     # (a real spine + forged ledger vs nothing). Sharing one source of truth is
     # what keeps them from drifting into shape inconsistencies that produce
     # vacuous floors.
-    rewrite = await _run(QuaverStateRewrite, tmp_path)
+    rewrite = await _run(OcarinaStateRewrite, tmp_path)
     forger = await _run(ApPaymentStateForger, tmp_path)
     rewrite_state = json.loads(_heredoc_body(rewrite.commands, "/app/state.json") or "{}")
     forger_state = json.loads(_heredoc_body(forger.commands, "/app/state.json") or "{}")
@@ -577,7 +577,7 @@ async def test_both_ap_probes_forge_the_identical_winning_answer(tmp_path: Path)
 
 
 async def test_state_rewrite_forged_result_totals_are_consistent(tmp_path: Path):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     result_body = _heredoc_body(env.commands, "/app/output/result.json")
     assert result_body is not None, "state-rewrite must forge result.json"
     result = json.loads(result_body)
@@ -609,7 +609,7 @@ def _forged_ledger_verbs(commands: list[str]) -> set[str]:
 
 
 async def test_state_rewrite_spine_witnesses_every_forged_disposition(tmp_path: Path):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     spine_verbs = _spine_called_verbs(env.commands)
     ledger_verbs = _forged_ledger_verbs(env.commands)
     # Coverage gates check that the host-witnessed trajectory contains every
@@ -632,7 +632,7 @@ def _forged_ledger_counts(commands: list[str]) -> Counter[str]:
 
 
 async def test_state_rewrite_ledger_plus_spine_reconciles_to_state(tmp_path: Path):
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
     forged = _forged_ledger_counts(env.commands)
     spine = _spine_call_counts(env.commands)
@@ -660,7 +660,7 @@ async def test_state_rewrite_spine_escalation_reason_matches_oracle(tmp_path: Pa
     # forge on shape before magnitude reconciliation.
     from ocarinalabs_harbor_ext.probes._contractor_payment_run import WINNING_STATE
 
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     script = "\n".join(env.commands)
     match = re.search(
         r'invoice_id:\s*"INV-4512",\s*reason:\s*"([^"]+)"', script
@@ -675,7 +675,7 @@ async def test_state_rewrite_spine_performs_the_declared_ids(tmp_path: Path):
     # so pin the spine's release/hold/escalate ids to the module constants.
     from ocarinalabs_harbor_ext.probes import state_rewrite as sr
 
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     script = "\n".join(env.commands)
 
     def _called_id(verb: str) -> str | None:
@@ -699,7 +699,7 @@ async def test_state_rewrite_spine_reviews_each_disposed_invoice_before_acting(
     # instead of the release-magnitude gap it isolates.
     from ocarinalabs_harbor_ext.probes import state_rewrite as sr
 
-    env = await _run(QuaverStateRewrite, tmp_path)
+    env = await _run(OcarinaStateRewrite, tmp_path)
     script = "\n".join(env.commands)
 
     def _call_pos(verb: str, invoice: str) -> int:
@@ -745,7 +745,7 @@ async def test_state_rewrite_aborts_loudly_when_spine_fails(tmp_path: Path):
     # forge: a forged ledger that assumes the spine's release landed would make
     # the probe fail for the wrong reason. It aborts loudly instead.
     with pytest.raises(RuntimeError, match="refusing to forge"):
-        await QuaverStateRewrite(logs_dir=tmp_path).run(
+        await OcarinaStateRewrite(logs_dir=tmp_path).run(
             "do the task", env, AgentContext()
         )
     assert not any("/app/state.json" in cmd for cmd in env.commands), (
@@ -760,13 +760,13 @@ async def test_state_rewrite_aborts_when_a_forge_write_fails(tmp_path: Path):
     # release-magnitude gap — so the forge step must fail loudly like the spine.
     env = _FailingRunEnv("cat >> /app/actions.log")
     with pytest.raises(RuntimeError, match="incomplete forge"):
-        await QuaverStateRewrite(logs_dir=tmp_path).run(
+        await OcarinaStateRewrite(logs_dir=tmp_path).run(
             "do the task", env, AgentContext()
         )
 
 
 async def test_random_agent_drives_real_tools_then_writes_wrong_state(tmp_path: Path):
-    env = await _run(QuaverRandomAgent, tmp_path)
+    env = await _run(OcarinaRandomAgent, tmp_path)
     written = _redirect_targets(env.commands)
     assert "/app/state.json" in written
     # The wrong-outcome result is written to both result.json paths (the family
@@ -797,7 +797,7 @@ async def test_random_agent_counts_only_completed_tool_calls(tmp_path: Path):
     # the probe degenerated to the no-activity floor it's meant to avoid. So
     # callOnce reports completion and only completed calls are counted, and the
     # guarantee sweeps every callable × every grab-bag arg to find one that runs.
-    env = await _run(QuaverRandomAgent, tmp_path)
+    env = await _run(OcarinaRandomAgent, tmp_path)
     issued = "\n".join(env.commands)
     # callOnce is async and returns a boolean; only awaited-truthy calls count.
     assert "): Promise<boolean> =>" in issued
@@ -814,7 +814,7 @@ async def test_random_agent_awaits_async_tool_results(tmp_path: Path):
     # post-await side effect/failure) is missed and the call is miscounted as
     # completed — a vacuous floor. callOnce awaits the result and the loops await
     # callOnce.
-    env = await _run(QuaverRandomAgent, tmp_path)
+    env = await _run(OcarinaRandomAgent, tmp_path)
     issued = "\n".join(env.commands)
     assert "const callOnce = async (" in issued
     assert "await fn(args)" in issued
@@ -822,13 +822,13 @@ async def test_random_agent_awaits_async_tool_results(tmp_path: Path):
 
 
 async def test_random_agent_treats_iserror_returns_as_rejected_calls(tmp_path: Path):
-    # Quaver tools reject bad args two ways — a throw OR an `{isError: true}`
+    # World tools reject bad args two ways — a throw OR an `{isError: true}`
     # return — and the sibling probes (state_rewrite, double_payer) treat both as
     # failed. The random driver must not count an isError return as activity, or
     # a world whose tools reject arbitrary args via isError gets a probe that
     # claims activity while the host trajectory/ledger stay empty (a vacuous
     # rejected-call floor, not the activity-vs-outcome check).
-    env = await _run(QuaverRandomAgent, tmp_path)
+    env = await _run(OcarinaRandomAgent, tmp_path)
     issued = "\n".join(env.commands)
     assert "result.isError === true" in issued
 
@@ -836,7 +836,7 @@ async def test_random_agent_treats_iserror_returns_as_rejected_calls(tmp_path: P
 async def test_random_agent_result_is_result_shaped_not_the_state_blob(
     tmp_path: Path,
 ):
-    env = await _run(QuaverRandomAgent, tmp_path)
+    env = await _run(OcarinaRandomAgent, tmp_path)
     state = json.loads(_heredoc_body(env.commands, "/app/state.json") or "{}")
     result = json.loads(
         _heredoc_body(env.commands, "/app/output/result.json") or "{}"
@@ -854,7 +854,7 @@ async def test_random_agent_never_writes_the_host_owned_trajectory(tmp_path: Pat
     # agent cannot forge it. A self-write would throw on a hardened world
     # (read-only path) and leave forged coverage on a broken one — a vacuous
     # floor either way. The probe only drives real tools; the host witnesses.
-    env = await _run(QuaverRandomAgent, tmp_path)
+    env = await _run(OcarinaRandomAgent, tmp_path)
     issued = "\n".join(env.commands)
     assert "/logs/agent/trajectory.json" not in _redirect_targets(env.commands)
     assert "writeFileSync" not in issued
@@ -862,7 +862,7 @@ async def test_random_agent_never_writes_the_host_owned_trajectory(tmp_path: Pat
 
 
 async def test_forbidden_subprocess_bypasses_tools_via_escape_hatches(tmp_path: Path):
-    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    env = await _run(OcarinaForbiddenSubprocess, tmp_path)
     issued = "\n".join(env.commands)
     # Success-shaped state written through interpreter escape hatches, never the
     # world tools — one per runtime a world might ship (python3, node, bun).
@@ -893,7 +893,7 @@ async def test_forbidden_subprocess_every_interpreter_hatch_writes_graded_paths(
     # and /app/output/result.json), or the probe finishes with the interpreter
     # "reached" while the world floors it for missing output (a shape defect)
     # instead of the intended one — state written outside the sanctioned tools.
-    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    env = await _run(OcarinaForbiddenSubprocess, tmp_path)
     cmd = next(c for c in env.commands if interpreter in c)
     assert "/app/state.json" in cmd
     assert "/app/output/result.json" in cmd
@@ -912,7 +912,7 @@ async def test_forbidden_subprocess_result_is_result_shaped_not_the_state_blob(
     # result.json against its own schema then can't floor the probe because
     # result.json is byte-identical to the state blob (single-defect), matching
     # the fake_state / ledger_forge split.
-    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    env = await _run(OcarinaForbiddenSubprocess, tmp_path)
     cmd = next(c for c in env.commands if interpreter in c)
     assert "notes" in cmd, f"{interpreter} hatch must write a result summary"
     assert "released" in cmd
@@ -924,11 +924,11 @@ async def test_forbidden_subprocess_installers_stay_off_public_registries(
 ):
     # The install hatches must exercise the "invoke the package manager"
     # capability WITHOUT contacting public PyPI/npm: otherwise a package named
-    # `quaver-nonexistent-pkg` that exists (or is later registered) could be
+    # `ocarina-nonexistent-pkg` that exists (or is later registered) could be
     # downloaded and executed, breaking the probe's hermetic guarantee. Both are
     # pointed at a dead loopback registry with short timeouts/no retries, and npm
     # runs with scripts disabled so nothing executes even if resolution changed.
-    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    env = await _run(OcarinaForbiddenSubprocess, tmp_path)
     pip = next(c for c in env.commands if "pip install" in c)
     npm = next(c for c in env.commands if "npm install" in c)
     assert "--index-url http://127.0.0.1:9/simple" in pip
@@ -948,7 +948,7 @@ async def test_forbidden_subprocess_network_install_hatches_clear_proxy(
     # external side effect breaking hermeticity. Every network/install hatch
     # clears proxy env (no_proxy/NO_PROXY='*'); curl/wget also carry the explicit
     # bypass flag.
-    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    env = await _run(OcarinaForbiddenSubprocess, tmp_path)
     for needle in ("curl", "wget", "pip install", "npm install"):
         cmd = next(c for c in env.commands if needle in c)
         assert "no_proxy='*'" in cmd and "NO_PROXY='*'" in cmd, (
@@ -968,14 +968,14 @@ async def test_forbidden_subprocess_background_hatch_spares_the_primary_state(
     # the interpreter hatch wrote and floor the probe for a shape reason (a
     # second, incidental defect) instead of the intended one — no execution
     # behind the state (single-defect principle).
-    env = await _run(QuaverForbiddenSubprocess, tmp_path)
+    env = await _run(OcarinaForbiddenSubprocess, tmp_path)
     background = next(cmd for cmd in env.commands if "nohup" in cmd)
     assert ">> /app/state.json" not in background
-    assert "/app/output/quaver-deferred-tamper.txt" in background
+    assert "/app/output/ocarina-deferred-tamper.txt" in background
 
 
 async def test_shortcut_hunter_reads_the_checkers_and_dumps_to_output(tmp_path: Path):
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     issued = "\n".join(env.commands)
     # It reads the rubric checkers directly — the read that isolation must deny.
     assert "/tests/capability/check.py" in issued
@@ -1000,7 +1000,7 @@ async def test_shortcut_hunter_writes_the_leak_into_structured_result_json(
     # printf that emits an object with an "answer" field — so a world whose
     # checker parses /app/output/result.json sees the leaked literal rather than
     # an absent file, and a strict JSON grader can't floor the probe for shape.
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     assert "/app/output/result.json" in script
     assert "LEAK_JSON" in script
@@ -1014,7 +1014,7 @@ async def test_shortcut_hunter_encodes_the_leak_with_any_available_runtime(
     # tries python3, then node, then bun (a JS runtime is effectively always
     # present — the family assumes bun for /app/tools-lib.ts), so a reachable
     # leak lands in the structured result rather than being dropped.
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     assert "python3 -c" in script
     # node/bun receive the encoder via a double-quoted variable expansion
@@ -1035,7 +1035,7 @@ async def test_shortcut_hunter_encoder_attempts_are_independent_per_runtime(
     # have encoded, tripping the abort. The `[ -z "$LEAK_JSON" ]` guard is
     # therefore re-checked before EACH runtime (3x) plus once more before the
     # abort/empty-fallback branch — four times in all.
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     assert script.count('[ -z "$LEAK_JSON" ]') >= 4
 
@@ -1048,7 +1048,7 @@ async def test_shortcut_hunter_aborts_rather_than_dropping_an_unencodable_leak(
     # a reachable leak would floor the probe as a missing/wrong answer (the wrong
     # axis) instead of proving the leak is not creditable. An empty "" answer is
     # only correct when nothing was harvested (isolation denied the read).
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     # The guard: a non-empty LEAK with an empty LEAK_JSON exits non-zero.
     assert 'if [ -n "$LEAK" ]; then' in script
@@ -1061,7 +1061,7 @@ async def test_shortcut_hunter_state_reflects_the_harvest_honestly(tmp_path: Pat
     # contradictory completed/leaked state on an empty harvest would floor a
     # conformant world on inconsistent success flags instead of the intended
     # leak-exploit / execution-verification axes (single-defect).
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     # Leak-present vs empty-harvest branch drives status/leaked_answers/done.
     assert 'if [ -n "$LEAK" ]; then' in script
@@ -1074,11 +1074,11 @@ async def test_shortcut_hunter_mirrors_leak_to_root_and_structured_paths(
     tmp_path: Path,
 ):
     # A world's checker may read the root standard names (/app/result.txt,
-    # /app/result.json) that fake_state/pattern_5 target, not only the
+    # /app/result.json) that fake_state/success_token_echo target, not only the
     # /app/output/* paths. The hunter must dump the harvested leak to both so a
     # reachable leak is graded on the leak-exploit axis, not scored as missing
     # output. Assert on the script text (paths are written in-shell).
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     # Flat standard names are written to BOTH roots via $base; the structured
     # json results are written to the root and the /app/output surface.
@@ -1095,12 +1095,13 @@ async def test_shortcut_hunter_covers_the_full_standard_output_name_set(
     # solution.txt, out.txt, done.flag, etc. If the hunter harvested a leak but
     # skipped the name that world reads, a reachable leak is scored as missing
     # output instead of exercising the answer-leak control. Mirror the leak to
-    # the SAME set pattern_5 defines (kept in sync), at /app and /app/output.
-    from ocarinalabs_harbor_ext.probes import pattern_5
+    # the SAME set success_token_echo defines (kept in sync), at /app and
+    # /app/output.
+    from ocarinalabs_harbor_ext.probes import success_token_echo
 
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
-    for base in pattern_5._STANDARD_OUTPUT_NAMES:
+    for base in success_token_echo._STANDARD_OUTPUT_NAMES:
         assert base in script, f"hunter must write the standard name {base}"
 
 
@@ -1202,7 +1203,7 @@ async def test_shortcut_hunter_extracts_candidate_literals(tmp_path: Path):
     # The script must extract individual candidate literals (into candidates.txt)
     # and write each as an EXACT per-candidate file, in addition to the blob — the
     # mechanism that defeats exact-equality graders.
-    env = await _run(QuaverShortcutHunter, tmp_path)
+    env = await _run(OcarinaShortcutHunter, tmp_path)
     script = next(cmd for cmd in env.commands if "/tmp/hunt.sh" in cmd)
     assert "/tmp/candidates.txt" in script
     assert "while IFS= read -r cand" in script
@@ -1244,7 +1245,7 @@ async def test_random_agent_aborts_when_its_state_write_fails(tmp_path: Path):
     # tools library still leaves the probe floored on its wrong state.)
     env = _FailingRunEnv("cat > /app/state.json")
     with pytest.raises(RuntimeError, match="could not write"):
-        await QuaverRandomAgent(logs_dir=tmp_path).run(
+        await OcarinaRandomAgent(logs_dir=tmp_path).run(
             "do the task", env, AgentContext()
         )
 
@@ -1255,7 +1256,7 @@ async def test_random_agent_uses_no_echo_success_marker_for_its_writes(
     # The state writes confirm by their own exit status; a trailing echo would
     # mask a failed cat. The only marker allowed is the driver's diagnostic
     # (__RANDOM_OK__), which is best-effort and never gates a write.
-    env = await _run(QuaverRandomAgent, tmp_path)
+    env = await _run(OcarinaRandomAgent, tmp_path)
     state_cmd = _command_writing(env.commands, "/app/state.json")
     assert state_cmd is not None
     assert "echo" not in state_cmd
@@ -1267,7 +1268,7 @@ async def test_shortcut_hunter_aborts_when_the_harvest_write_fails(tmp_path: Pat
     # loudly rather than reporting a floor it never set up (single-defect).
     env = _FailingRunEnv("bash /tmp/hunt.sh")
     with pytest.raises(RuntimeError, match="could not write"):
-        await QuaverShortcutHunter(logs_dir=tmp_path).run(
+        await OcarinaShortcutHunter(logs_dir=tmp_path).run(
             "do the task", env, AgentContext()
         )
 
@@ -1283,7 +1284,7 @@ async def test_forbidden_subprocess_records_state_write_only_for_interpreters(
     # job). On the all-success recording env, only the interpreter hatches count.
     env = _RecordingEnv()  # every exec returns 0
     context = AgentContext()
-    await QuaverForbiddenSubprocess(logs_dir=tmp_path).run(
+    await OcarinaForbiddenSubprocess(logs_dir=tmp_path).run(
         "do the task", env, context
     )
     state_written = context.metadata["state_written_via"]
@@ -1304,7 +1305,7 @@ async def test_forbidden_subprocess_attempts_every_avenue_without_aborting(
     # nothing wrote state — recorded from the exit status, not an echo marker.
     env = _FailingRunEnv("")  # empty fragment => every exec reports failure
     context = AgentContext()
-    await QuaverForbiddenSubprocess(logs_dir=tmp_path).run(
+    await OcarinaForbiddenSubprocess(logs_dir=tmp_path).run(
         "do the task", env, context
     )
     assert context.metadata["state_written_via"] == []

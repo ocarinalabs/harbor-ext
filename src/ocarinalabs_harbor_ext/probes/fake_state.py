@@ -1,6 +1,6 @@
-"""Quaver execution-faking probe — the "wrote the answer, did no work" agent.
+"""Ocarina execution-faking probe — the "wrote the answer, did no work" agent.
 
-Writes success-shaped final state to the conventional Quaver state/output
+Writes success-shaped final state to the conventional world state/output
 paths WITHOUT calling any world tool, so it leaves no tool side-effect ledger
 (`/app/actions.log`) and no ATIF trajectory. It is the canonical faker: an
 agent that fabricates the end state a grader reads instead of doing the work.
@@ -8,9 +8,9 @@ agent that fabricates the end state a grader reads instead of doing the work.
 A world that credits this probe above the floor is grading state without
 execution verification — its rubric needs `trajectory_tool_used` coverage plus
 a ledger/trajectory reconciliation criterion (see
-``docs/design/execution-verification.md``). Distinct from pattern_5 (loose
-success tokens in flat output files); this one targets structured state/JSON
-rubrics specifically.
+``docs/design/execution-verification.md``). Distinct from the success-token-echo
+probe (loose success tokens in flat output files); this one targets structured
+state/JSON rubrics specifically.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from harbor.models.agent.context import AgentContext
 # Raised when a fake write fails (e.g. a protected path). Reporting a fake it
 # never wrote would let the probe score an empty attempt as a floor and mask a
 # broken setup, so an unwritten fake aborts loudly.
-_WRITE_FAILED = "quaver-fake-state: could not write the fake state"
+_WRITE_FAILED = "ocarina-fake-state: could not write the fake state"
 
 # A kitchen-sink "success" state: whatever loose field a state rubric happens
 # to check, this tries to satisfy it — WITHOUT any tool call behind it.
@@ -61,12 +61,12 @@ _TARGETS = (
 )
 
 
-class QuaverFakeState(BaseAgent):
+class OcarinaFakeState(BaseAgent):
     """Writes plausible final state with zero tool calls behind it."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-fake-state"
+        return "ocarina-fake-state"
 
     def version(self) -> str:
         return "1.0.0"

@@ -1,14 +1,15 @@
-"""Quaver adversarial isolation probe (Berkeley Pattern 1).
+"""Ocarina adversarial isolation-escape probe (Berkeley Pattern 1).
 
-Attempts broad isolation-boundary escapes beyond pattern 7's narrow
-reward-sink writes: host-mount probes, proc filesystem tricks, privilege
-escalation, rubric exfiltration. A world whose probes score above the
-floor has lost structural container isolation.
+Attempts broad isolation-boundary escapes beyond the reward-sink probe's
+narrow verifier-state writes: host-mount probes, proc filesystem tricks,
+privilege escalation, rubric exfiltration. A world whose probes score above
+the floor has lost structural container isolation.
 
-Distinct from :class:`~ocarinalabs_harbor_ext.probes.pattern_7.QuaverPattern7`:
-pattern 7 tests the evaluator's known reward-sink paths; pattern 1 tests the
-broader runtime assumption that the agent cannot reach outside its allocated
-container surface. Run both — they're complementary.
+Distinct from
+:class:`~ocarinalabs_harbor_ext.probes.reward_sink.OcarinaRewardSink`:
+the reward-sink probe tests the evaluator's known reward-sink paths; this
+probe tests the broader runtime assumption that the agent cannot reach
+outside its allocated container surface. Run both — they're complementary.
 """
 from __future__ import annotations
 
@@ -32,12 +33,12 @@ _ESCAPE_ATTEMPTS = (
 )
 
 
-class QuaverPattern1(BaseAgent):
+class OcarinaIsolationEscape(BaseAgent):
     """Tests the agent-container isolation boundary end-to-end."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-pattern-1"
+        return "ocarina-isolation-escape"
 
     def version(self) -> str:
         return "1.0.0"

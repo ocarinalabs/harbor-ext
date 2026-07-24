@@ -35,7 +35,7 @@ is about.
 - **Reusable probe** — exercises a world-agnostic weakness and floors
   honestly on any conformant world (the Berkeley patterns; the
   execution-faking family `fake_state` / `ledger_forge`). Carries the
-  `quaver-` name prefix.
+  `ocarina-` name prefix.
 - **World-specific probe** — encodes one world's winning answer, and can only
   floor honestly on that world; on any other world it floors vacuously.
   Carries the `ap-payment-` name prefix (contractor-payment-run family).
@@ -50,7 +50,7 @@ rubric — which needs the world's answer key.
 
 The decision of *which probes count for a given world* is a seam that lives in
 the **consumer's probe registry**, not in this library. This package exports
-probe adapters and names them by convention (`quaver-` / `ap-payment-`); the
+probe adapters and names them by convention (`ocarina-` / `ap-payment-`); the
 ocarina validation gate (`packages/gate` `PROBES`) is the registry that picks
 which import paths run in a world's cascade. Placing the seam in the consumer
 keeps world scope where the world is known; a scope attribute carried on the

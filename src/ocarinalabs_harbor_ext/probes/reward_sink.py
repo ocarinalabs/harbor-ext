@@ -1,9 +1,10 @@
-"""Quaver adversarial tamper probe (Berkeley Pattern 7).
+"""Ocarina adversarial reward-sink probe (Berkeley Pattern 7).
 
-Attempts direct writes to verifier state. Probes the isolation boundary
-between agent-writable surfaces and root-owned verifier state. A world
-that grants a high score to this agent has lost its isolation boundary —
-likely a permission drift on ``/logs/verifier`` or on ``/tests``.
+Attempts direct writes to verifier state (reward files, trajectory, the
+test script). Probes the isolation boundary between agent-writable surfaces
+and root-owned verifier state. A world that grants a high score to this
+agent has lost its isolation boundary — likely a permission drift on
+``/logs/verifier`` or on ``/tests``.
 """
 from __future__ import annotations
 
@@ -28,12 +29,12 @@ _TAMPER_TARGETS = (
 )
 
 
-class QuaverPattern7(BaseAgent):
+class OcarinaRewardSink(BaseAgent):
     """Attempts to overwrite isolation-protected verifier and test paths."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-pattern-7"
+        return "ocarina-reward-sink"
 
     def version(self) -> str:
         return "1.0.0"

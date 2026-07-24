@@ -1,4 +1,4 @@
-"""Quaver random-agent probe — the false-positive control.
+"""Ocarina random-agent probe — the false-positive control.
 
 Drives the world's REAL tools with arbitrary arguments in a random order and a
 random multiplicity — through the world's actual tool bodies, exactly as the
@@ -34,7 +34,7 @@ from harbor.models.agent.context import AgentContext
 # reported a floor without landing its state, an empty run would score as a
 # floor for the wrong reason (no output) rather than the intended one (valid
 # actions, wrong outcome) — a vacuous floor. An unwritten state aborts loudly.
-_WRITE_FAILED = "quaver-random-agent: could not write the wrong-outcome state"
+_WRITE_FAILED = "ocarina-random-agent: could not write the wrong-outcome state"
 
 # Imports every export of the world's tool library and calls each callable a
 # random number of times (0-2) in shuffled order with a grab-bag of arbitrary
@@ -144,12 +144,12 @@ _WRONG_RESULT = """{
 """
 
 
-class QuaverRandomAgent(BaseAgent):
+class OcarinaRandomAgent(BaseAgent):
     """Takes arbitrary valid tool actions; must not earn reward."""
 
     @staticmethod
     def name() -> str:
-        return "quaver-random-agent"
+        return "ocarina-random-agent"
 
     def version(self) -> str:
         return "1.0.0"
