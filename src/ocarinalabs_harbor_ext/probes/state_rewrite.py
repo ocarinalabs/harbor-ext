@@ -86,12 +86,19 @@ _ESCALATION_REASONS: dict[str, str] = dict(WINNING_STATE["escalation_reasons"])
 _SPINE_RELEASED = _RELEASED[0]  # INV-4501
 _SPINE_HELD = "INV-4498"
 _SPINE_ESCALATED = "INV-4512"
-_SPINE_REVIEWED = _SPINE_RELEASED  # the spine reviews + verifies INV-4501
+# The spine reviews + verifies every invoice it dispositions, each before acting
+# on it, so the host trajectory shows review -> verify -> disposition for each —
+# matching the forged state's reviewed set and denying a per-invoice
+# "reviewed-before-disposition" coverage gate any foothold to floor the probe
+# for a reason other than release magnitude. All three are in the winning
+# reviewed set, so skipping them in the review/verify forge loops keeps
+# spine + forged totals equal to the state counts.
+_SPINE_REVIEWED = (_SPINE_RELEASED, _SPINE_HELD, _SPINE_ESCALATED)
 
-# The bun script drives ONE real spine — one call of every counted tool
-# (review, verify, release, hold, escalate, submit) — through the world's
-# actual tool bodies. It writes nothing: Harbor's host-built trajectory
-# witnesses exactly these calls.
+# The bun script drives ONE real spine — one release, one hold, one escalate,
+# one submit, plus a review + verify of each disposed invoice before its
+# disposition — through the world's actual tool bodies. It writes nothing:
+# Harbor's host-built trajectory witnesses exactly these calls.
 _REAL_SPINE_SCRIPT = r"""
 import {
   escalateInvoice,
@@ -118,17 +125,24 @@ const call = (
   calls.push({ fn, args, err });
 };
 
+// Review -> verify -> disposition for every invoice the spine acts on, so the
+// host trajectory witnesses each disposition the forged state/ledger claims AND
+// the review that precedes it. Coverage (both tool presence and the per-invoice
+// review-before-disposition order) passes, leaving magnitude reconciliation —
+// one witnessed release_payment against the forged state's four — as the sole
+// gate that can floor this probe.
 call("review_invoice", { invoice_id: "INV-4501" }, reviewInvoice);
 call("verify_vendor_account", { invoice_id: "INV-4501" }, verifyVendorAccount);
 call("release_payment", { invoice_id: "INV-4501" }, releasePayment);
-// One real hold and one real escalate so the host trajectory witnesses every
-// disposition the forged state/ledger claims: coverage passes, leaving
-// magnitude reconciliation as the sole gate that can floor this probe.
+call("review_invoice", { invoice_id: "INV-4498" }, reviewInvoice);
+call("verify_vendor_account", { invoice_id: "INV-4498" }, verifyVendorAccount);
 call(
   "hold_payment",
   { invoice_id: "INV-4498", reason: "already settled" },
   holdPayment
 );
+call("review_invoice", { invoice_id: "INV-4512" }, reviewInvoice);
+call("verify_vendor_account", { invoice_id: "INV-4512" }, verifyVendorAccount);
 call(
   "escalate_invoice",
   { invoice_id: "INV-4512", reason: "over PO tolerance" },
@@ -183,16 +197,19 @@ def _ledger_args(verb: str, inv: str) -> str:
 
 
 def _forged_ledger_lines() -> str:
-    # The real spine logged exactly one call of every counted tool (the _SPINE_*
-    # ids, and for review/verify the _SPINE_REVIEWED invoice). Forge only the
+    # The real spine logged exactly one call of every counted tool: the
+    # _SPINE_* disposition ids, and for review/verify every _SPINE_REVIEWED id
+    # (the spine reviews + verifies each invoice it dispositions). Forge only the
     # REMAINING rows, skipping those ids, so the whole ledger (spine lines +
     # these) totals the forged state's counts exactly for every counted tool —
-    # review and verify included. Any short-count (e.g. reviews short by 7) is
+    # review and verify included. Any short-count (e.g. reviews short by 5) is
     # an internal ledger-vs-state inconsistency a gate rejects before the
     # release-magnitude test — the single defect this probe isolates — runs.
+    # (Reviews: 8 in the winning state, 3 witnessed by the spine, 5 forged
+    # here.)
     lines: list[str] = []
     seq = 100
-    for verb, timestamp, invoices, spine_id in (
+    for verb, timestamp, invoices, spine_ids in (
         ("review_invoice", "2026-07-05T20:58:00Z", _REVIEWED, _SPINE_REVIEWED),
         (
             "verify_vendor_account",
@@ -200,17 +217,17 @@ def _forged_ledger_lines() -> str:
             _REVIEWED,
             _SPINE_REVIEWED,
         ),
-        ("release_payment", "2026-07-05T21:00:00Z", _RELEASED, _SPINE_RELEASED),
-        ("hold_payment", "2026-07-05T21:01:00Z", _HELD, _SPINE_HELD),
+        ("release_payment", "2026-07-05T21:00:00Z", _RELEASED, (_SPINE_RELEASED,)),
+        ("hold_payment", "2026-07-05T21:01:00Z", _HELD, (_SPINE_HELD,)),
         (
             "escalate_invoice",
             "2026-07-05T21:02:00Z",
             _ESCALATED,
-            _SPINE_ESCALATED,
+            (_SPINE_ESCALATED,),
         ),
     ):
         for inv in invoices:
-            if inv == spine_id:
+            if inv in spine_ids:
                 continue
             lines.append(
                 f"{timestamp}\t{seq}\t{verb}\tok\t{_ledger_args(verb, inv)}"
