@@ -131,6 +131,17 @@ _SUBMIT_TIME_ISERROR_TOOLS = _STUB_TOOLS_LIB.replace(
     "  return {};\n};",
 )
 
+# A world that rejects the duplicate at RELEASE time (so no duplicate reaches
+# the finalized run) AND whose submitPaymentRun then fails for an unrelated
+# reason. The submit failure is NOT idempotency detection here — the duplicate
+# never landed — so it must abort loudly rather than be swallowed.
+_RELEASE_REJECTED_THEN_SUBMIT_FAILS_TOOLS = _DUPLICATE_REJECTING_TOOLS.replace(
+    "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => ({});",
+    "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => {\n"
+    '  throw new Error("submit-time validation failed (unrelated to duplicates)");\n'
+    "};",
+)
+
 
 def _write_world(root: Path, tools_lib: str = _STUB_TOOLS_LIB) -> None:
     root.mkdir(parents=True, exist_ok=True)
@@ -254,6 +265,27 @@ def test_double_payer_tolerates_submit_time_iserror_rejection(tmp_path: Path) ->
     )
     assert result.returncode == 0, (
         f"a submit-time isError rejection must not abort; stderr: {result.stderr}"
+    )
+
+
+def test_double_payer_keeps_submit_strict_after_release_time_rejection(
+    tmp_path: Path,
+) -> None:
+    world = tmp_path / "app"
+    _write_world(world, tools_lib=_RELEASE_REJECTED_THEN_SUBMIT_FAILS_TOOLS)
+    # The world catches the duplicate at RELEASE time, so no duplicate reaches
+    # the finalized run. A subsequent submit failure is therefore an unrelated
+    # setup failure, not the idempotency signal — the probe must abort loudly
+    # (bun exits non-zero) rather than swallow it and report a vacuous floor.
+    result = subprocess.run(
+        ["bun", "run", str(world / "double-payer.ts")],
+        cwd=world,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0, (
+        "a submit failure after a release-time duplicate rejection must abort; "
+        f"stderr: {result.stderr}"
     )
 
 

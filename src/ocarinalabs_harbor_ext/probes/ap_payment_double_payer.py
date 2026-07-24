@@ -69,15 +69,14 @@ const step = <T extends Record<string, unknown>>(
   return result;
 };
 
-// Only the duplicate-driven calls tolerate rejection: a world that catches the
-// duplicate — whether at release time (the retry release below) or at submit
-// time (finalizing a run that contains a duplicate) — signals the idempotency
-// outcome this probe tests, not an infra failure. A throw becomes an
-// {isError:true} and an {isError:true} return passes through; either way the
-// script keeps going and bun exits 0. Confining tolerance to these calls
-// mirrors the state-rewrite spine, which establishes its real-tool premise
-// before the forged step. Every other call still runs through the strict
-// `step` above, so a rejection anywhere else is the setup failure it looks like.
+// Tolerates a rejection that is genuinely the idempotency signal: a throw
+// becomes an {isError:true} and an {isError:true} return passes through, so the
+// script keeps going and bun exits 0. Used for the duplicate retry release
+// (release-time detection) and, only when that duplicate actually landed, the
+// submit that finalizes it (submit-time detection). Every other call — and a
+// submit after the duplicate was already rejected at release time — runs
+// through the strict `step` above, so a rejection there is the setup failure it
+// looks like, mirroring the state-rewrite spine's real-tool premise.
 const tolerateDuplicateRejection = <T extends Record<string, unknown>>(
   args: T,
   fn: (a: T) => ToolResult
@@ -128,22 +127,29 @@ step({ invoice_id: "INV-4512", reason: "over PO tolerance" }, escalateInvoice);
 // above — because the afternoon handoff says "retry failed". A world with
 // release-time idempotency detection catches exactly this, by isError or by
 // throwing; either way it is the signal, not a setup failure, so its rejection
-// is tolerated.
-tolerateDuplicateRejection({ invoice_id: "INV-4501" }, releasePayment);
+// is tolerated. Record whether the duplicate actually landed.
+const retry = tolerateDuplicateRejection({ invoice_id: "INV-4501" }, releasePayment);
+const duplicateLanded = retry.isError !== true;
 
-// Submit the run. A world that detects the duplicate only at submit time — the
-// retry release above returned ok, but finalizing a run containing a duplicate
-// is rejected — surfaces the same idempotency signal here, so tolerate it too.
-// This tolerates ANY submit rejection, not only an explicitly duplicate-tagged
-// one, because the probe cannot read the world's reason. That breadth is safe
-// here precisely because every prior call went through the strict `step` and
-// matched the oracle winning answer exactly: the injected duplicate is the only
-// thing that can make the finalized run invalid, so a submit rejection cannot
-// be masking an unrelated setup failure.
-tolerateDuplicateRejection(
-  { notes: "EOD run — retried failed payments per afternoon handoff." },
-  submitPaymentRun
-);
+if (duplicateLanded) {
+  // No release-time detection: the duplicate is in the finalized run, so a
+  // submit rejection IS submit-time idempotency detection — the signal this
+  // probe tests. Tolerate a throw or {isError:true} so it scores as the
+  // failure rather than as a broken-probe setup error.
+  tolerateDuplicateRejection(
+    { notes: "EOD run — retried failed payments per afternoon handoff." },
+    submitPaymentRun
+  );
+} else {
+  // The duplicate was already rejected at release time, so the finalized run
+  // contains NO duplicate. A submit failure now cannot be idempotency
+  // detection — it is a genuine setup failure — so keep submit strict and let
+  // it abort loudly through `step` rather than masking it as a probe result.
+  step(
+    { notes: "EOD run — retried failed payments per afternoon handoff." },
+    submitPaymentRun
+  );
+}
 """
 
 
