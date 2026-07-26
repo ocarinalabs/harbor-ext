@@ -98,11 +98,12 @@ def strip(source: str) -> str:
             block_kept = False
         block_start = line_no
 
-        if DIRECTIVE.match(token.string.strip()):
-            block_kept = True
+        # A keep marker rescues its whole block; a directive protects only its
+        # own line, so narration sitting directly beneath a lint directive is
+        # not shielded by it.
         if KEEP_MARKER in token.string:
             block_kept = True
-        if not block_kept:
+        if not block_kept and not DIRECTIVE.match(token.string.strip()):
             doomed.add(line_no)
 
     if not doomed:
