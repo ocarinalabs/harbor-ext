@@ -85,13 +85,18 @@ def _own_line_comments(source: str) -> list[tokenize.TokenInfo]:
 
 def strip(source: str) -> str:
     """Drop every own-line comment block that is not kept or a directive."""
-    if REVIEWED_MARKER in source:
+    comments = _own_line_comments(source)
+    # The marker counts only as a comment of its own. A plain substring search
+    # would also match the string in a docstring or a test fixture and exempt
+    # that whole file by accident.
+    if any(REVIEWED_MARKER in token.string for token in comments):
         return source
+
     doomed: set[int] = set()
     block_start: int | None = None
     block_kept = False
 
-    for token in _own_line_comments(source):
+    for token in comments:
         line_no = token.start[0]
         contiguous = block_start is not None and line_no == block_start + 1
         if not contiguous:

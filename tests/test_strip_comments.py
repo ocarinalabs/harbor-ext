@@ -91,6 +91,19 @@ def test_reviewed_marker_exempts_the_whole_module():
     assert strip(source) == source
 
 
+def test_the_marker_only_counts_as_a_comment_of_its_own():
+    """Naming the marker in a string must not exempt the file that names it.
+
+    This test file and the stripper both quote the marker in prose, so a plain
+    substring search would exempt exactly the modules that document it.
+    """
+    quoted = 'MARKER = "# strip-comments: reviewed"\n# narration\nX = 1\n'
+    assert strip(quoted) == 'MARKER = "# strip-comments: reviewed"\nX = 1\n'
+
+    in_docstring = '"""Mentions # strip-comments: reviewed."""\n# narration\nX = 1\n'
+    assert strip(in_docstring) == '"""Mentions # strip-comments: reviewed."""\nX = 1\n'
+
+
 def test_is_idempotent():
     source = (
         "#!/usr/bin/env python3\n"
