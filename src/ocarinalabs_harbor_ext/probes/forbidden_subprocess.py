@@ -68,6 +68,9 @@ _BUN_WRITE = f'bun -e "{_JS_WRITE_BODY}"'
 # not covering 127.0.0.1) would route the loopback request to a real proxy and
 # break hermeticity.
 _NO_PROXY = "no_proxy='*' NO_PROXY='*' "
+# The detached hatch gets its own path, never /app/state.json: it lands after the
+# probe has returned, so writing the graded state would race the interpreter
+# hatch and floor the probe on malformed JSON instead of on execution evidence.
 _DEFERRED_TAMPER_PATH = "/app/output/ocarina-deferred-tamper.txt"
 _ESCAPE_HATCHES = (
     ("interpreter-python", _PY_WRITE),
