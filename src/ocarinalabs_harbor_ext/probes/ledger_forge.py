@@ -13,15 +13,14 @@ ledger ALONE. The defense is trajectory coverage (`trajectory_tool_used` reads
 the agent cannot forge). This probe is the runtime backstop for that
 requirement. See ``docs/design/execution-verification.md``.
 """
+# strip-comments: reviewed
 from __future__ import annotations
 
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-# Raised when a forge write fails (e.g. a protected /app/actions.log). A forge
-# that reports success without landing its files would score an empty attempt
-# as a floor, so an unwritten forge aborts loudly.
+# An unwritten forge aborts loudly rather than scoring an empty attempt as a floor.
 _WRITE_FAILED = "ocarina-ledger-forge: could not write the forged state/ledger"
 
 _FAKE_STATE = """{
@@ -37,10 +36,6 @@ _FAKE_STATE = """{
 }
 """
 
-# result.json carries the run SUMMARY, not the raw state blob: a world that
-# validates result.json against its own schema would reject the state shape and
-# floor the probe before ledger reconciliation runs. Mirrors fake_state's split
-# between state and result payloads.
 _FAKE_RESULT = """{
   "status": "completed",
   "payment_run_submitted": true,
@@ -49,9 +44,12 @@ _FAKE_RESULT = """{
 }
 """
 
-# Common load-bearing tool verbs across Ocarina worlds. The probe forges several
-# `ok` lines per verb so a count-based reconciliation might match a small state
-# delta. Ledger format: <iso>\t<seq>\t<tool>\t<status>\t<argsJSON>.
+# Ledger format: <iso>\t<seq>\t<tool>\t<status>\t<argsJSON>. Three `ok` lines per
+# verb so a count-based reconciliation might match a small state delta.
+#
+# These verbs are AP-payment's, and that is the probe's reach limit: a world whose
+# counted tools are named otherwise sees zero matching ledger rows, so it floors
+# the probe on shape and never tests ledger-versus-trajectory reconciliation.
 _TOOL_VERBS = (
     "process_item",
     "submit_result",
@@ -98,9 +96,6 @@ class OcarinaLedgerForge(BaseAgent):
     ) -> None:
         await environment.exec("mkdir -p /app/output")
         ledger = _forged_ledger()
-        # Each write's own exit status is the check — no trailing echo, whose
-        # exit 0 would mask a failed cat (e.g. a protected ledger) and report a
-        # forge that never landed.
         forge_writes = (
             f"cat > /app/state.json <<'FAKE_EOF'\n{_FAKE_STATE}\nFAKE_EOF",
             f"cat > /app/output/result.json <<'FAKE_EOF'\n{_FAKE_RESULT}\nFAKE_EOF",

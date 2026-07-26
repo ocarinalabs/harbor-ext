@@ -27,10 +27,6 @@ pytestmark = pytest.mark.skipif(
     shutil.which("bun") is None, reason="bun is required to execute world tools"
 )
 
-# A realistic stand-in for the world's tools-lib: state resolves against the
-# process cwd (like the shipped tools-lib's `${BASE_DIR}/state.json` default of
-# /app when the run starts there), so releasing appends a payment record and
-# counts a repeat release of an already-paid invoice as a duplicate.
 _STUB_TOOLS_LIB = r"""
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -68,25 +64,18 @@ export const releasePayment = (a: { invoice_id: string }): ToolResult => {
 """
 
 
-# A world whose reviewInvoice throws: models a genuine SETUP failure on the
-# oracle path (fixture drift / uninitialized state). It must abort the probe.
 _THROWING_REVIEW_TOOLS = _STUB_TOOLS_LIB.replace(
     "export const reviewInvoice = (_a: { invoice_id: string }): ToolResult => ({});",
     "export const reviewInvoice = (_a: { invoice_id: string }): ToolResult => {\n"
     '  throw new Error("world state not initialized");\n};',
 )
 
-# A world whose reviewInvoice signals failure by VALUE ({isError:true}) rather
-# than throwing: still a setup failure on the oracle path, which must abort.
 _ISERROR_REVIEW_TOOLS = _STUB_TOOLS_LIB.replace(
     "export const reviewInvoice = (_a: { invoice_id: string }): ToolResult => ({});",
     "export const reviewInvoice = (_a: { invoice_id: string }): ToolResult => "
     "({ isError: true });",
 )
 
-# A world that rejects a DUPLICATE release by throwing (already-released id),
-# while first-time releases succeed. This is the one expected rejection the
-# probe must tolerate — its idempotency signal.
 _DUPLICATE_REJECTING_TOOLS = _STUB_TOOLS_LIB.replace(
     "  const s = load();\n"
     "  if (s.released.includes(a.invoice_id)) {\n"
@@ -104,11 +93,6 @@ _DUPLICATE_REJECTING_TOOLS = _STUB_TOOLS_LIB.replace(
     "  return {};",
 )
 
-# A world that ALLOWS the duplicate release (no release-time idempotency check)
-# but rejects the run at SUBMIT time by throwing, because the finalized run
-# contains a duplicate payment. This is the same idempotency signal caught one
-# step later, so the probe must tolerate the submit throw, not report it as a
-# broken-setup failure.
 _SUBMIT_TIME_THROW_TOOLS = _STUB_TOOLS_LIB.replace(
     "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => ({});",
     "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => {\n"
@@ -119,8 +103,6 @@ _SUBMIT_TIME_THROW_TOOLS = _STUB_TOOLS_LIB.replace(
     "  return {};\n};",
 )
 
-# Same submit-time detection, signalled by VALUE ({isError:true}) instead of a
-# throw — still the idempotency signal, still tolerated.
 _SUBMIT_TIME_ISERROR_TOOLS = _STUB_TOOLS_LIB.replace(
     "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => ({});",
     "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => {\n"
@@ -131,10 +113,6 @@ _SUBMIT_TIME_ISERROR_TOOLS = _STUB_TOOLS_LIB.replace(
     "  return {};\n};",
 )
 
-# A world that rejects the duplicate at RELEASE time (so no duplicate reaches
-# the finalized run) AND whose submitPaymentRun then fails for an unrelated
-# reason. The submit failure is NOT idempotency detection here — the duplicate
-# never landed — so it must abort loudly rather than be swallowed.
 _RELEASE_REJECTED_THEN_SUBMIT_FAILS_TOOLS = _DUPLICATE_REJECTING_TOOLS.replace(
     "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => ({});",
     "export const submitPaymentRun = (_a: { notes?: string }): ToolResult => {\n"
@@ -146,9 +124,6 @@ _RELEASE_REJECTED_THEN_SUBMIT_FAILS_TOOLS = _DUPLICATE_REJECTING_TOOLS.replace(
 def _write_world(root: Path, tools_lib: str = _STUB_TOOLS_LIB) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "tools-lib.ts").write_text(tools_lib)
-    # The probe imports "/app/tools-lib.ts" absolutely; point it at this sandbox
-    # so the script runs without a container while still resolving state against
-    # its own cwd. The script writes no trajectory, so no /logs rewrite needed.
     script = _DOUBLE_PAYER_SCRIPT.replace(
         "/app/tools-lib.ts", str(root / "tools-lib.ts")
     )
@@ -158,7 +133,6 @@ def _write_world(root: Path, tools_lib: str = _STUB_TOOLS_LIB) -> None:
 def test_double_payment_lands_when_run_from_the_world_root(tmp_path: Path) -> None:
     world = tmp_path / "app"
     _write_world(world)
-    # Run from the world root (what `cd /app` guarantees in the container).
     subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=world,
@@ -167,8 +141,6 @@ def test_double_payment_lands_when_run_from_the_world_root(tmp_path: Path) -> No
     )
     state = json.loads((world / "state.json").read_text())
     assert state["duplicate_payment_count"] == 1
-    # The defect is a duplicate release of an oracle-RELEASED invoice (INV-4501);
-    # the held INV-4498 is never released.
     assert state["released"].count("INV-4501") == 2
     assert "INV-4498" not in state["released"]
 
@@ -176,10 +148,6 @@ def test_double_payment_lands_when_run_from_the_world_root(tmp_path: Path) -> No
 def test_double_payer_setup_failure_aborts_the_script(tmp_path: Path) -> None:
     world = tmp_path / "app"
     _write_world(world, tools_lib=_THROWING_REVIEW_TOOLS)
-    # A throw on an oracle-path call (here reviewInvoice) is a setup failure:
-    # the winning-flow premise never held, so it must NOT be swallowed. bun
-    # exits non-zero, which run() turns into a loud _EXECUTION_FAILED abort
-    # rather than reporting a vacuous floor.
     result = subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=world,
@@ -194,9 +162,6 @@ def test_double_payer_setup_failure_aborts_the_script(tmp_path: Path) -> None:
 def test_double_payer_setup_iserror_return_aborts_the_script(tmp_path: Path) -> None:
     world = tmp_path / "app"
     _write_world(world, tools_lib=_ISERROR_REVIEW_TOOLS)
-    # An oracle-path tool that signals failure by VALUE ({isError:true}) rather
-    # than by throwing is still a setup failure: `step` must treat it as one, so
-    # bun exits non-zero and run() aborts — symmetric with throw propagation.
     result = subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=world,
@@ -211,9 +176,6 @@ def test_double_payer_setup_iserror_return_aborts_the_script(tmp_path: Path) -> 
 def test_double_payer_tolerates_only_the_duplicate_rejection(tmp_path: Path) -> None:
     world = tmp_path / "app"
     _write_world(world, tools_lib=_DUPLICATE_REJECTING_TOOLS)
-    # The world rejects the duplicate INV-4501 release by throwing; that single
-    # expected rejection is the idempotency signal and must be tolerated, so the
-    # script completes and bun exits 0.
     result = subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=world,
@@ -224,17 +186,12 @@ def test_double_payer_tolerates_only_the_duplicate_rejection(tmp_path: Path) -> 
         f"the expected duplicate rejection must not abort; stderr: {result.stderr}"
     )
     state = json.loads((world / "state.json").read_text())
-    # The first (oracle-path) release landed; the duplicate was rejected.
     assert state["released"].count("INV-4501") == 1
 
 
 def test_double_payer_tolerates_submit_time_duplicate_rejection(tmp_path: Path) -> None:
     world = tmp_path / "app"
     _write_world(world, tools_lib=_SUBMIT_TIME_THROW_TOOLS)
-    # A world with no release-time idempotency check can still catch the
-    # duplicate when the run is submitted. That submit rejection is the same
-    # idempotency signal as a release-time one — not a setup failure — so the
-    # script must complete and bun must exit 0.
     result = subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=world,
@@ -245,9 +202,6 @@ def test_double_payer_tolerates_submit_time_duplicate_rejection(tmp_path: Path) 
         f"a submit-time duplicate rejection must not abort; stderr: {result.stderr}"
     )
     state = json.loads((world / "state.json").read_text())
-    # The duplicate release landed (no release-time detection here); the world
-    # only surfaces it at submit, which is exactly what this probe must let
-    # count as the failure signal.
     assert state["duplicate_payment_count"] == 1
     assert state["released"].count("INV-4501") == 2
 
@@ -255,8 +209,6 @@ def test_double_payer_tolerates_submit_time_duplicate_rejection(tmp_path: Path) 
 def test_double_payer_tolerates_submit_time_iserror_rejection(tmp_path: Path) -> None:
     world = tmp_path / "app"
     _write_world(world, tools_lib=_SUBMIT_TIME_ISERROR_TOOLS)
-    # Submit-time detection signalled by value ({isError:true}) rather than a
-    # throw is still the idempotency signal and must be tolerated.
     result = subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=world,
@@ -273,10 +225,6 @@ def test_double_payer_keeps_submit_strict_after_release_time_rejection(
 ) -> None:
     world = tmp_path / "app"
     _write_world(world, tools_lib=_RELEASE_REJECTED_THEN_SUBMIT_FAILS_TOOLS)
-    # The world catches the duplicate at RELEASE time, so no duplicate reaches
-    # the finalized run. A subsequent submit failure is therefore an unrelated
-    # setup failure, not the idempotency signal — the probe must abort loudly
-    # (bun exits non-zero) rather than swallow it and report a vacuous floor.
     result = subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=world,
@@ -294,9 +242,6 @@ def test_double_payment_misses_the_world_state_when_run_elsewhere(tmp_path: Path
     _write_world(world)
     stray = tmp_path / "stray"
     stray.mkdir()
-    # Running from the wrong cwd writes state into the stray dir; the world's
-    # own state.json is never created — the exact false-negative these tests
-    # guard against, and the reason the probe must `cd /app`.
     subprocess.run(
         ["bun", "run", str(world / "double-payer.ts")],
         cwd=stray,

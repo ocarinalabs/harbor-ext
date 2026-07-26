@@ -1,37 +1,19 @@
 """Ocarina adversarial probes.
 
-Probes corresponding to the Berkeley patterns for broken agent benchmarks,
-plus the execution-faking family that targets the "wrote the answer, did no
-work" loophole. Each probe is a standalone
-:class:`~harbor.agents.base.BaseAgent` subclass. A benchmark that credits any
-probe above the configured floor is not publication-ready.
+Each probe is a standalone :class:`~harbor.agents.base.BaseAgent` subclass that
+plays an adversary against a benchmark world. A benchmark that credits any probe
+above the configured floor is not publication-ready. See ``README.md`` for what
+each one catches and ``CONTEXT.md`` for the vocabulary.
 
-- isolation_escape / reward_sink: isolation-boundary escapes and verifier-state
-  tamper.
-- judge_injection / success_token_echo: judge-injection and loose success-token
-  credit.
-- fake_state / ledger_forge: fabricate final state (and forge the in-container
-  ledger) without calling tools — floored only by execution verification
-  (trajectory coverage + reconciliation). See
-  ``docs/design/execution-verification.md``.
-- state_rewrite: the hybrid — drives a minimal REAL tool spine (coverage
-  passes), then rewrites final state to the winning answer and forges the
-  ledger to match. Floored only by the trajectory lower bound in
-  reconciliation (host-witnessed calls >= claimed state delta).
-- random_agent / forbidden_subprocess / shortcut_hunter: the gate's
-  false-positive controls. random_agent takes arbitrary valid tool actions and
-  must not earn reward (rewarding activity over outcome is a broken world);
-  forbidden_subprocess reaches the outcome via subprocess escape hatches
-  instead of the sanctioned tools and must be floored by execution + safety
-  checks; shortcut_hunter greps the checkers/fixtures for the answers and
-  hardcodes them — the runtime side of the answer-leak controls.
+Two families, distinguished by name prefix:
 
-The probes above form the general, reusable adversarial gate (``ocarina-*``
-names). Alongside them ship world-specific probes (``ap-payment-*`` names) that
-encode the winning answer for one world — contractor-payment-run — and exist to
-prove that world's execution gate holds against an answer-knowing adversary.
-They are loaded ad hoc by submodule path during hardening, not run as part of
-the general cascade.
+- ``ocarina-*`` — the general cascade, run against any Harbor world.
+- ``ap-payment-*`` — world-specific, encoding the contractor-payment-run winning
+  answer to prove that world's execution gate holds against an answer-knowing
+  adversary. Loaded ad hoc during hardening, never as part of the cascade.
+
+``state_rewrite`` carries the ``ocarina-`` prefix but is world-specific; the
+consumer's registry, not this package, decides which probes count for a world.
 
 The stock Harbor ``nop`` agent covers Berkeley's null-agent archetype; run it
 alongside these for full coverage.
