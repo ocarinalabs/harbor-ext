@@ -1,16 +1,20 @@
 """Ocarina adversarial isolation-escape probe (Berkeley Pattern 1).
 
-Attempts broad isolation-boundary escapes beyond the reward-sink probe's
-narrow verifier-state writes: host-mount probes, proc filesystem tricks,
-privilege escalation, rubric exfiltration. A world whose probes score above
-the floor has lost structural container isolation.
+Attempts broad isolation-boundary escapes: host-mount probes, proc filesystem
+tricks, privilege escalation, rubric exfiltration. A world that scores above the
+floor has lost structural container isolation.
 
-Distinct from
-:class:`~ocarinalabs_harbor_ext.probes.reward_sink.OcarinaRewardSink`:
-the reward-sink probe tests the evaluator's known reward-sink paths; this
-probe tests the broader runtime assumption that the agent cannot reach
-outside its allocated container surface. Run both — they're complementary.
+Complementary to
+:class:`~ocarinalabs_harbor_ext.probes.reward_sink.OcarinaRewardSink`, which
+tests the evaluator's known reward-sink paths specifically; this one tests the
+broader assumption that the agent cannot reach outside its container. Run both.
+
+Both are genuinely world-agnostic: the paths they attack are Harbor's own, not
+any world's. Their signal is in ``isolation_breaches`` / ``tampered_paths``
+metadata and in a reward that rises when a tamper lands, not in a graded state
+file — a consumer that reads only the reward learns nothing from a floor.
 """
+# strip-comments: reviewed
 from __future__ import annotations
 
 from harbor.agents.base import BaseAgent

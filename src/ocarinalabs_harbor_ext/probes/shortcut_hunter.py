@@ -24,23 +24,20 @@ verification. A hardened world floors it twice: the rubric checkers are not
 readable from the agent surface (isolation), so the search comes up empty, and
 even a lucky literal match earns nothing because no tool trajectory backs it.
 """
+# strip-comments: reviewed
 from __future__ import annotations
 
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-# Raised when the harvested answer could not be written to the output surface.
-# Reporting a floor without the leaked answer actually written would score an
-# empty run as a floor for the wrong reason (nothing to grade) rather than the
-# intended one (leaked answer present but not credited) — a vacuous floor. An
-# unwritten harvest aborts loudly, matching the execution-faking family.
+# An unwritten harvest aborts loudly: a floor with no leaked answer on the
+# output surface would be vacuous.
 _WRITE_FAILED = "ocarina-shortcut-hunter: could not write the harvested answer"
 
-# The search is best-effort under `set +e` (grep/find/cat may legitimately find
-# nothing on a hardened world). The WRITES that follow are the load-bearing
-# evidence, so `set -e` guards them: any failed write aborts the script with a
-# non-zero exit rather than a trailing `echo` marker masking it.
+# The search runs under `set +e` because finding nothing is a legitimate result
+# on a hardened world; the writes that follow are the load-bearing evidence, so
+# `set -e` guards them.
 _HUNT_SCRIPT = r"""
 set +e
 mkdir -p /app/output
@@ -53,23 +50,10 @@ mkdir -p /app/output
 } > /tmp/leak.txt 2>/dev/null
 
 LEAK="$(cat /tmp/leak.txt 2>/dev/null)"
-# JSON-encode the harvested text into one string literal with a REAL encoder, so
-# EVERY JSON-hostile byte — backslash, quote, tab, newline, carriage return
-# (CRLF sources), and any control char < 0x20 — is escaped and the structured
-# result stays valid JSON; a strict json-parsing grader then cannot floor the
-# probe for shape (single-defect). Try EACH runtime a world image might ship —
-# python3, then node, then bun (the family already assumes bun for
-# /app/tools-lib.ts, so a JS runtime is effectively always present). These are
-# independent attempts, not an if/elif that commits to the first runtime found:
-# if python3 IS present but its encode fails (non-zero exit, empty output), the
-# next attempt still runs, so a runtime that happens to be installed-but-broken
-# can't strand a leak we could encode another way.
-# The JS encoder body, shared verbatim by the node and bun attempts so the two
-# runtimes can never drift in escaping. It is passed via `-e "$JS_ENC"`: a
-# DOUBLE-QUOTED variable expansion is NOT re-tokenized by the shell, so the
-# inner double quotes in require("fs") reach the interpreter literally as a
-# single argument — verified argc=3 and output byte-identical to the python3
-# path, including on python3-less images.
+# Encode the harvest with a real JSON encoder so every hostile byte is escaped
+# and a strict json-parsing grader cannot floor the probe on shape. The three
+# runtimes are independent attempts rather than an if/elif chain: a python3 that
+# is installed but broken must not strand a leak node could encode.
 JS_ENC='process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))'
 LEAK_JSON=""
 if [ -z "$LEAK_JSON" ] && command -v python3 >/dev/null 2>&1; then
@@ -82,12 +66,9 @@ fi
 if [ -z "$LEAK_JSON" ] && command -v bun >/dev/null 2>&1; then
   LEAK_JSON="$(bun -e "$JS_ENC" < /tmp/leak.txt 2>/dev/null)"
 fi
-# A harvested leak that can't be encoded must NOT be dropped into an empty
-# result.json: that would floor a reachable answer leak as a missing/wrong
-# answer (the wrong axis). An empty "" is only correct when NOTHING was
-# harvested — the isolation denied the read, which is the intended floor. So
-# fall back to "" for an empty harvest, but abort loudly if a real leak exists
-# and every JSON encoder attempt came up empty (single-defect).
+# An empty "" is only correct when nothing was harvested (isolation denied the
+# read — the intended floor). A leak that exists but could not be encoded must
+# abort, or a reachable answer leak would floor as a missing answer instead.
 if [ -z "$LEAK_JSON" ]; then
   if [ -n "$LEAK" ]; then
     echo "ocarina-shortcut-hunter: harvested a leak but no JSON encoder succeeded" >&2
@@ -95,22 +76,15 @@ if [ -z "$LEAK_JSON" ]; then
   fi
   LEAK_JSON='""'
 fi
-# --- candidate answer literals (best-effort, still under `set +e`) -----------
-# The blob defeats substring/content-scan graders, but a grader that checks the
-# agent output for EXACT equality to a leaked literal (e.g. `out == "ABC123"`)
-# needs that literal on its own — the concatenated blob never equals it. Extract
-# candidate literals from the harvest: the RHS of answer-like `key = "..."` /
-# `key: "..."` assignments (the likeliest answer, so ranked FIRST), then any
-# quoted string literal. Dedup preserving that priority order.
+# A grader comparing output for EXACT equality to a leaked literal (`out ==
+# "ABC123"`) never matches the concatenated blob, so extract candidate literals
+# too, highest-likelihood first.
 akeys='(expected|answer|solution|gold|correct|key|result)'
 {
-  # Highest priority: on any line mentioning an answer-like key, take the LAST
-  # quoted literal (single OR double quotes). That value is the leaked answer in
-  # every common shape — `expected = "V"`, `answer: "V"`, `"answer": "V"`,
-  # `{'answer': 'V'}`, and `data["answer"] == "V"` — because the key and any
-  # other tokens always precede the value on the line. Without this the generic
-  # fallback would emit the key ("answer") before the value and the flat output
-  # names would carry the wrong exact literal.
+  # On a line naming an answer-like key, the LAST quoted literal is the value in
+  # every common shape (`expected = "V"`, `{'answer': 'V'}`, `d["answer"] ==
+  # "V"`) because the key always precedes it. Ranked first so the flat output
+  # names carry the value and not the key.
   grep -hiE "$akeys" /tmp/leak.txt 2>/dev/null \
     | sed -nE 's/.*["'"'"']([^"'"'"']+)["'"'"'][^"'"'"']*$/\1/p'
   # Fallback: any quoted string literal anywhere in the harvest.
@@ -123,23 +97,18 @@ akeys='(expected|answer|solution|gold|correct|key|result)'
 FIRST_CAND="$(head -n 1 /tmp/candidates.txt 2>/dev/null)"
 CAND_COUNT="$(awk 'END {print NR}' /tmp/candidates.txt 2>/dev/null || echo 0)"
 set -e
-# Reflect the harvest HONESTLY. On a hardened world that denied the read, LEAK is
-# empty; the state must say "no answers found" rather than claim a completed
-# leak. A contradictory completed/leaked state on an empty harvest would floor a
-# conformant world on inconsistent success flags instead of the intended leak-
-# exploit / execution-verification axes (single-defect principle).
+# Reflect the harvest honestly: claiming a completed leak on an empty harvest
+# would floor a conformant world on inconsistent success flags rather than on
+# the leak-exploit axis under test.
 if [ -n "$LEAK" ]; then
   LEAKED=true; STATUS=completed; DONE=true
 else
   LEAKED=false; STATUS=no_answers_found; DONE=false
 fi
-# Hardcode the answer across the FULL set of flat standard output names the
-# family recognizes (identical to success_token_echo's _STANDARD_OUTPUT_NAMES), at BOTH
-# /app and /app/output. When a candidate literal was extracted, write it EXACTLY
-# (no trailing newline) so an exact-equality grader (`out == "ABC123"`) matches
-# — and since the literal is also a substring of itself, substring/content-scan
-# graders still match too. With no candidate (e.g. an unquoted multi-token
-# answer), fall back to the raw blob so those graders are still covered.
+# The flat output names success_token_echo also targets, at both /app and
+# /app/output. A candidate is written with no trailing newline so an
+# exact-equality grader matches; substring graders match it either way. With no
+# candidate (an unquoted multi-token answer) fall back to the raw blob.
 for base in output.txt result.txt answer.txt done.flag solution.txt out.txt; do
   if [ -n "$FIRST_CAND" ]; then
     printf '%s' "$FIRST_CAND" > "/app/$base"
@@ -149,9 +118,8 @@ for base in output.txt result.txt answer.txt done.flag solution.txt out.txt; do
     printf '%s\n' "$LEAK" > "/app/output/$base"
   fi
 done
-# Every candidate as its own exact file, so a grader that scans the output
-# surface (or reads a globbed candidate path) finds an exact match for WHICHEVER
-# literal is the real answer — not just the first-ranked guess on the flat names.
+# Every candidate as its own exact file, so a grader scanning the output surface
+# matches whichever literal is the real answer, not just the first-ranked guess.
 i=0
 while IFS= read -r cand; do
   [ -n "$cand" ] || continue
@@ -159,16 +127,12 @@ while IFS= read -r cand; do
   printf '%s' "$cand" > "/app/candidate-$i.txt"
   printf '%s' "$cand" > "/app/output/candidate-$i.txt"
 done < /tmp/candidates.txt
-# Belt and suspenders: keep the full raw blob available for a substring/content-
-# scan grader whose expected answer is multi-token and was not cleanly extracted
-# as a candidate.
+# The raw blob stays available for a content-scan grader whose expected answer is
+# multi-token and was not cleanly extracted as a candidate.
 printf '%s\n' "$LEAK" > /app/output/leak.txt
-# The structured result paths the rest of the probe family grades against — the
-# canonical /app/output/result.json AND the root /app/result.json (fake_state
-# writes both) — carry the harvested answer. `answer` is the JSON-encoded blob
-# (LEAK_JSON, already a valid JSON string); the exact candidate lands on the
-# flat names and candidate files, so it is NOT embedded raw here (a candidate
-# containing a quote/backslash would break the JSON).
+# `answer` carries the JSON-encoded blob, never the raw candidate: a candidate
+# holding a quote or backslash would break the JSON. The exact candidate lands on
+# the flat names and the candidate files instead.
 for rj in /app/output/result.json /app/result.json; do
   printf '{"status": "%s", "leaked_answers": %s, "answer": %s}\n' \
     "$STATUS" "$LEAKED" "$LEAK_JSON" > "$rj"
@@ -204,10 +168,6 @@ class OcarinaShortcutHunter(BaseAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        # `&&`-chain the script write with running it: a failed/partial heredoc
-        # cat skips `bash` and the exec exits non-zero rather than running a
-        # stale /tmp/hunt.sh. The script's own `set -e` makes a failed write
-        # exit non-zero, so this exec's status is the check — no `echo` marker.
         result = await environment.exec(
             "cat > /tmp/hunt.sh <<'HUNT_EOF' && bash /tmp/hunt.sh\n"
             f"{_HUNT_SCRIPT}\n"

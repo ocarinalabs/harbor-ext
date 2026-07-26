@@ -12,19 +12,20 @@ a ledger/trajectory reconciliation criterion (see
 probe (loose success tokens in flat output files); this one targets structured
 state/JSON rubrics specifically.
 """
+# strip-comments: reviewed
 from __future__ import annotations
 
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-# Raised when a fake write fails (e.g. a protected path). Reporting a fake it
-# never wrote would let the probe score an empty attempt as a floor and mask a
-# broken setup, so an unwritten fake aborts loudly.
+# An unwritten fake aborts loudly rather than scoring an empty attempt as a floor.
 _WRITE_FAILED = "ocarina-fake-state: could not write the fake state"
 
-# A kitchen-sink "success" state: whatever loose field a state rubric happens
-# to check, this tries to satisfy it — WITHOUT any tool call behind it.
+# A kitchen-sink "success" state: whatever loose field a state rubric happens to
+# check, this tries to satisfy it. The field names are contractor-payment-run's,
+# which is the probe's reach limit — a world with a different state schema floors
+# it on shape rather than on missing execution evidence.
 _FAKE_STATE = """{
   "status": "completed",
   "done": true,
@@ -81,8 +82,6 @@ class OcarinaFakeState(BaseAgent):
         context: AgentContext,
     ) -> None:
         await environment.exec("mkdir -p /app/output")
-        # Each write's own exit status is the check — no trailing echo, whose
-        # exit 0 would mask a failed cat and report a fake that never landed.
         written: list[str] = []
         for path, payload in _TARGETS:
             result = await environment.exec(

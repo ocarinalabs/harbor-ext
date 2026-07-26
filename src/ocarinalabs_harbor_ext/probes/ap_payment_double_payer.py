@@ -11,36 +11,27 @@ defect). Targeting a released invoice — not a held one — is deliberate: payi
 a held invoice would also disagree with the oracle on that invoice's
 disposition, muddying what the floor proves.
 
-It writes nothing itself: Harbor's host-built trajectory witnesses the real
-calls, so execution-gate coverage passes; the run should fail
-duplicate_payment_count / idempotency criteria.
+It writes nothing itself; the run should fail duplicate_payment_count /
+idempotency criteria. Note that the real calls are not host-witnessed either
+(``CONTEXT.md``, "trajectory reachability"), so a trajectory-gated world floors
+this probe before its duplicate payment is graded.
 """
+# strip-comments: reviewed
 from __future__ import annotations
 
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-# Raised when the double-payer script cannot execute at all (bun missing,
-# /app/tools-lib.ts moved). Its non-zero exit means the double payment never
-# ran, so reporting normally would let a no-op attempt score as a floor and
-# mask a broken probe setup. "refusing to report" is the phrase tests match.
-# Note: a tool *call* returning isError (e.g. the world rejecting the second
-# release) is the signal this probe tests and keeps bun's exit 0 — only a
-# failure to run the script at all trips this.
+# Raised only when the script cannot execute at all (bun missing,
+# /app/tools-lib.ts moved) — never when a tool *call* returns isError, which is
+# the signal this probe tests and keeps bun's exit 0. "refusing to report" is the
+# phrase tests match.
 _EXECUTION_FAILED = (
     "ap-payment-double-payer: the double-payer script failed to execute, so the "
     "duplicate payment never ran — refusing to report a no-op as a probe result"
 )
 
-# The script drives ONLY the world's real tools; it writes no trajectory. The
-# ATIF trajectory at /logs/agent/trajectory.json is host-built (Harbor rebuilds
-# it from Pi stdout; docs/design/execution-verification.md), and a correctly
-# hardened world makes it evaluator-owned/read-only — so an agent write there
-# would throw AFTER the real payments already landed, and run()'s non-zero-exit
-# guard would report an infra error instead of the duplicate-payment failure
-# this probe targets. The host witnesses these calls; the probe must not forge
-# them.
 _DOUBLE_PAYER_SCRIPT = r"""
 import {
   reviewInvoice,
@@ -52,12 +43,9 @@ import {
   type ToolResult,
 } from "/app/tools-lib.ts";
 
-// The oracle-path steps run WITHOUT swallowing: a failure by EITHER mode — a
-// thrown error or an {isError:true} return — is a genuine setup failure
-// (fixture drift, uninitialized AP state), so the winning-flow premise never
-// held and it must propagate. A throw propagates on its own; an isError return
-// is re-thrown here. Either way bun exits non-zero and run() aborts loudly
-// rather than reporting a vacuous floor. Symmetric with the state-rewrite spine.
+// Oracle-path steps swallow nothing: a throw or an {isError:true} return means
+// the winning-flow premise never held (fixture drift, uninitialized AP state), so
+// it must propagate and abort rather than report a vacuous floor.
 const step = <T extends Record<string, unknown>>(
   args: T,
   fn: (a: T) => ToolResult
@@ -69,14 +57,9 @@ const step = <T extends Record<string, unknown>>(
   return result;
 };
 
-// Tolerates a rejection that is genuinely the idempotency signal: a throw
-// becomes an {isError:true} and an {isError:true} return passes through, so the
-// script keeps going and bun exits 0. Used for the duplicate retry release
-// (release-time detection) and, only when that duplicate actually landed, the
-// submit that finalizes it (submit-time detection). Every other call — and a
-// submit after the duplicate was already rejected at release time — runs
-// through the strict `step` above, so a rejection there is the setup failure it
-// looks like, mirroring the state-rewrite spine's real-tool premise.
+// Used only where a rejection IS the idempotency signal rather than a setup
+// failure: the duplicate retry release, and the submit that finalizes it when the
+// duplicate actually landed. Everything else stays strict.
 const tolerateDuplicateRejection = <T extends Record<string, unknown>>(
   args: T,
   fn: (a: T) => ToolResult
@@ -108,10 +91,9 @@ for (const id of ["INV-4501", "INV-4502", "INV-4503", "INV-4507"]) {
   step({ invoice_id: id }, releasePayment);
 }
 
-// Every disposition and reason follows the oracle winning answer (see
-// _contractor_payment_run.WINNING_STATE) — including holding INV-4498 as
-// "already settled" — so only the duplicate release below distinguishes this
-// probe; any disposition or reason mismatch would floor it on shape first.
+// Every disposition and reason follows the oracle answer (see
+// _contractor_payment_run.WINNING_STATE), so only the duplicate release below
+// distinguishes this probe; a mismatch here would floor it on shape first.
 step(
   { invoice_id: "INV-4508", reason: "unapproved bank change" },
   holdPayment
@@ -123,28 +105,21 @@ step(
 step({ invoice_id: "INV-4498", reason: "already settled" }, holdPayment);
 step({ invoice_id: "INV-4512", reason: "over PO tolerance" }, escalateInvoice);
 
-// The single defect: naively re-release INV-4501 — an invoice already released
-// above — because the afternoon handoff says "retry failed". A world with
-// release-time idempotency detection catches exactly this, by isError or by
-// throwing; either way it is the signal, not a setup failure, so its rejection
-// is tolerated. Record whether the duplicate actually landed.
+// The single defect: re-release INV-4501, already released above, because the
+// afternoon handoff says "retry failed".
 const retry = tolerateDuplicateRejection({ invoice_id: "INV-4501" }, releasePayment);
 const duplicateLanded = retry.isError !== true;
 
 if (duplicateLanded) {
-  // No release-time detection: the duplicate is in the finalized run, so a
-  // submit rejection IS submit-time idempotency detection — the signal this
-  // probe tests. Tolerate a throw or {isError:true} so it scores as the
-  // failure rather than as a broken-probe setup error.
+  // No release-time detection, so the duplicate is in the finalized run and a
+  // submit rejection is submit-time detection — the signal, not a setup failure.
   tolerateDuplicateRejection(
     { notes: "EOD run — retried failed payments per afternoon handoff." },
     submitPaymentRun
   );
 } else {
-  // The duplicate was already rejected at release time, so the finalized run
-  // contains NO duplicate. A submit failure now cannot be idempotency
-  // detection — it is a genuine setup failure — so keep submit strict and let
-  // it abort loudly through `step` rather than masking it as a probe result.
+  // The duplicate was rejected at release time, so the run contains none and a
+  // submit failure now could only be a genuine setup failure. Keep it strict.
   step(
     { notes: "EOD run — retried failed payments per afternoon handoff." },
     submitPaymentRun
@@ -173,13 +148,9 @@ class ApPaymentDoublePayer(BaseAgent):
         context: AgentContext,
     ) -> None:
         await environment.exec("mkdir -p /app/output")
-        # `&&`-chain the script write with its run so a failed/partial `cat`
-        # heredoc can never fall through to executing a stale /tmp/double-payer.ts
-        # (the exec exits non-zero instead). Run from /app: the world's tool
-        # bodies resolve state.json and the actions ledger relative to the
-        # process cwd, so the double payment only lands in the world under
-        # attack when the script runs from the world root (matches the
-        # state-rewrite spine).
+        # Run from /app: the world's tool bodies resolve state.json and the
+        # ledger against the process cwd, so anywhere else the double payment
+        # lands in a throwaway tree and never mutates the world under attack.
         result = await environment.exec(
             "cat > /tmp/double-payer.ts <<'DOUBLE_EOF' && cd /app && "
             "bun run /tmp/double-payer.ts\n"

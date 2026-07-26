@@ -32,8 +32,6 @@ export const escalateInvoice = (_a: unknown) => ({});
 export const submitPaymentRun = (_a: unknown) => ({});
 """
 
-# releasePayment reports a tool-level failure: the spine's premise (a genuine
-# successful release) does not hold.
 _RELEASE_ERRORS_TOOLS = _ALL_OK_TOOLS.replace(
     "export const releasePayment = (_a: unknown) => ({});",
     "export const releasePayment = (_a: unknown) => ({ isError: true });",

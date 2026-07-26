@@ -105,3 +105,39 @@ A corollary: a probe must be able to **establish its premise** before forging.
 If the real spine fails (its tools never ran), the trajectory the forge assumes
 does not exist, so the probe aborts loudly rather than emitting evidence that
 would fail for the wrong reason.
+
+## Probe implementation invariants
+
+Four rules every probe in this package follows. They are stated once here
+rather than re-argued in each module.
+
+1. **A write's own exit status is the check.** Never append a trailing
+   `echo __OK__` to a heredoc write: the echo's exit 0 masks a failed `cat`
+   (a protected path, a full disk) and the probe would report evidence it
+   never landed — an empty attempt scoring as a floor.
+2. **Chain a script write to its run with `&&`.** A failed or partial heredoc
+   must skip the interpreter rather than execute a stale `/tmp` script from an
+   earlier trial.
+3. **Never write `/logs/agent/trajectory.json`.** It is evaluator-owned, and a
+   hardened world makes it read-only, so the write throws and aborts the probe
+   before it reaches the gate it targets.
+4. **`result.json` carries the run summary, not the state blob.** A world that
+   validates `result.json` against its own schema would otherwise reject the
+   probe on shape before the targeted gate runs (single-defect principle).
+
+## Trajectory reachability
+
+An agent gets a trajectory only by writing one: Harbor's adapters (`pi`,
+`claude_code`, …) each rebuild `/logs/agent/trajectory.json` from their
+runtime's event stream, and declare it by setting `SUPPORTS_ATIF = True`. Every
+probe here inherits `BaseAgent.SUPPORTS_ATIF = False` and writes no trajectory —
+correctly, since invariant 3 forbids it. So a probe that shells out to a world's
+tool bodies mutates real state and writes the in-container ledger, but **nothing
+host-witnessed records those calls**.
+
+The consequence is the limit of this package: against a world whose criteria
+are conditioned on trajectory coverage, every probe here scores zero before
+its payload is read. Such a floor is honest evidence for the execution-faking
+family (absent execution evidence is exactly their claim) and **vacuous for
+every other probe** — the weakness they target sits behind a gate they cannot
+pass. Proving a probe fires needs a sensitivity fixture, not a gate run.

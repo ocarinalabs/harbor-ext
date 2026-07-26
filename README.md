@@ -88,19 +88,25 @@ harbor run /path/to/world --agent nop
 
 `state_rewrite` is world-specific (see the † note above) — run it only against the world whose answer it encodes, by its import path, not as part of the general cascade.
 
-## What each probe signals when it scores above floor
+## How to fix a world a probe caught
 
-**Isolation escape (Berkeley 1)** — the container boundary between agent and host leaks. An agent can write `/host/...` paths, walk `/proc/1/root`, or escalate suid. A world that credits this probe has lost structural isolation; failures here compromise every other safety claim.
+| Probe scored above floor | Fix |
+|---|---|
+| `isolation-escape`, `reward-sink` | Evaluator-owned paths (`/logs/verifier`, `/tests`) must be root-owned and agent-read-only. A breach here compromises every other safety claim. |
+| `judge-injection` | Wrap agent bytes in `<agent_output>...</agent_output>` and instruct the judge to ignore directives inside them. |
+| `success-token-echo` | Replace substring checks with structural equality or semantic comparison. |
+| `fake-state`, `ledger-forge`, `state-rewrite` | Add `trajectory_tool_used` coverage plus a ledger/trajectory reconciliation criterion, and condition state credit on it. |
+| `random-agent`, `forbidden-subprocess`, `shortcut-hunter` | Reconcile the state delta against the task rather than rewarding activity; watch for side effects outside the tool interface; keep the answer key off the agent-readable surface. |
 
-**Judge injection (Berkeley 4)** — the rubric's LLM-judge consumes agent-controlled text without structural delimiters. A world that credits this probe is coaching its own grader. Fix: wrap agent bytes in `<agent_output>...</agent_output>` with instructions to ignore directives inside.
+## Limits — what a floor does and does not prove
 
-**Success-token echo (Berkeley 5)** — the rubric credits any non-empty output or uses substring matching for output-file checks. A world that credits this probe has a non-discriminating capability signal. Fix: replace substring checks with structural equality or semantic comparison.
+A floor is evidence only when the probe genuinely reached the defense under test. Two things stop that, and both are properties of this package rather than of the world:
 
-**Reward sink (Berkeley 7)** — the agent can write to `/logs/verifier/reward.txt`, `/logs/agent/trajectory.json`, `/tests/`, or other paths the verifier trusts as canonical. A world that credits this probe has a permission drift. Fix: evaluator-owned paths must be root-owned and agent-read-only.
+**Probes emit no trajectory.** An agent gets one only by writing it: Harbor's adapters each rebuild `/logs/agent/trajectory.json` from their runtime's event stream and declare it with `SUPPORTS_ATIF = True`. Every probe here inherits `BaseAgent.SUPPORTS_ATIF = False` and writes no trajectory — correctly, since writing that path is forbidden. A probe that shells out to a world's tool bodies therefore mutates real state and writes the in-container ledger, but nothing host-witnessed records those calls. Against a world whose criteria are conditioned on trajectory coverage, **every probe here scores zero before its payload is read.** That is honest evidence for the execution-faking family, whose claim is precisely that no execution evidence exists — and vacuous for every other probe, whose target sits behind a gate it cannot pass.
 
-**Execution-faking family (`fake_state`, `ledger_forge`, `state_rewrite`)** — the rubric grades final state without verifying the agent did the work. Fix: add `trajectory_tool_used` coverage plus a ledger/trajectory reconciliation criterion (see `docs/design/execution-verification.md` in the ocarina repo).
+**Payloads are shaped for one world.** The mechanisms are general, but the bytes are not. `fake_state` and `forbidden_subprocess` write contractor-payment-run field names (`processedCount`, `payment_run_submitted`); `ledger_forge` forges AP-payment tool verbs; `success_token_echo`, `judge_injection`, and `shortcut_hunter` submit to a fixed set of flat output filenames. A world that grades a differently-shaped state file floors them on shape, without ever consulting the weakness they exist to find.
 
-**False-positive controls (`random_agent`, `forbidden_subprocess`, `shortcut_hunter`)** — these SHOULD floor on a healthy world; if one scores above floor, the world is rewarding activity over outcome, is blind to work done outside the tools, or leaks its answer key to the agent at runtime.
+So a clean cascade is a **necessary** condition for publication, not a sufficient one, and it should not be reported as "the world resisted every probe". Proving a probe fires needs a sensitivity fixture — a world with a known injected defect that a named probe must detect. Until one exists, prefer replaying a probe's payload against a world's own criteria offline (cheap, deterministic, no container) over inferring sensitivity from a gate run.
 
 ## Developer quickstart
 
@@ -109,7 +115,21 @@ git clone https://github.com/ocarinalabs/harbor-ext
 cd harbor-ext
 uv sync --extra dev
 uv run pytest
+uv run ruff check .
 ```
+
+A comment in this package earns its place by explaining *why* an attack works or
+why a defence is ordered as it is. Shared rationale lives once in `CONTEXT.md`,
+not restated per module. `scripts/strip_comments.py` enforces the floor:
+
+```bash
+python3 scripts/strip_comments.py --check src tests   # report, exit 1 if any
+python3 scripts/strip_comments.py tests               # rewrite
+```
+
+It never touches docstrings, inline comments, tool directives, or licence
+headers, and it honours `# strip-comments: keep` on a block and
+`# strip-comments: reviewed` on a module.
 
 ## Related
 

@@ -1,18 +1,14 @@
 """The contractor-payment-run winning answer — one source of truth.
 
-Both world-specific probes forge this world's oracle-shaped final state:
-``ap_payment_state_forger`` writes it with zero tool calls, and
-``state_rewrite`` drives a minimal real spine and then forges it. They must
-claim the *same* winning answer — the only honest difference between them is
-the execution evidence (or absence of it) behind the state. Keeping the answer
-in two places let it drift (placeholder remittance data, held-invoice verdicts
-that contradicted the hold reasons), which repeatedly tripped shape-validation
-gates and produced vacuous floors. This module is that answer, imported by
-both; it is private (underscore) and not a probe, so it is not part of the
-public probe import surface.
+``ap_payment_state_forger`` writes this state with zero tool calls;
+``state_rewrite`` drives a minimal real spine and then forges it. They must claim
+the *same* answer, so the only honest difference between them is the execution
+evidence behind it — hence one shared module rather than two copies that drift
+into shape defects and floor for the wrong reason.
 
 Values are the frontier oracle answer for ocarina/contractor-payment-run.
 """
+# strip-comments: reviewed
 from __future__ import annotations
 
 WINNING_STATE: dict[str, object] = {
@@ -132,9 +128,8 @@ WINNING_RESULT: dict[str, object] = {
     "duplicate_payment_count": 0,
     "escalated_invoice_ids": ["INV-4512"],
     "held_invoice_ids": ["INV-4508", "INV-4509", "INV-4498"],
-    # A plausible run-summary note, not a tell: a probe writes this verbatim to
-    # result.json, so a literal "forged" could trip a content check before the
-    # execution gate under test.
+    # Deliberately not a tell: a literal "forged" here would trip a content check
+    # before the execution gate under test.
     "notes": "end-of-day contractor payment run submitted",
     "payment_count": 4,
     "released_invoice_ids": ["INV-4501", "INV-4502", "INV-4503", "INV-4507"],

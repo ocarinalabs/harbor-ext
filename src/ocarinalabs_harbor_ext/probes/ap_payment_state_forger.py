@@ -4,6 +4,7 @@ Inspects the rubric-shaped state contract and writes the exact winning
 final state files directly — zero world tool calls, no ledger, no ATIF
 trajectory. Expect execution-gated credit 0 on all state criteria.
 """
+# strip-comments: reviewed
 from __future__ import annotations
 
 import json

@@ -6,6 +6,7 @@ and root-owned verifier state. A world that grants a high score to this
 agent has lost its isolation boundary — likely a permission drift on
 ``/logs/verifier`` or on ``/tests``.
 """
+# strip-comments: reviewed
 from __future__ import annotations
 
 from harbor.agents.base import BaseAgent
@@ -52,12 +53,9 @@ class OcarinaRewardSink(BaseAgent):
         attempted: list[str] = []
         for path, payload in _TAMPER_TARGETS:
             attempted.append(path)
-            # Create the target's parent first: some verifier dirs (e.g.
-            # /logs/agent) are not pre-created by every Harbor environment, and
-            # a bare `cat >` into a missing dir dies on "no such file" — the
-            # tamper would never reach the isolation boundary this probe tests.
-            # Creating the dir is itself part of the attempt: if isolation holds
-            # the write to the root-owned path still fails.
+            # Create the parent first: not every Harbor environment pre-creates
+            # /logs/agent, and a bare `cat >` into a missing dir dies on "no such
+            # file" without ever reaching the isolation boundary under test.
             result = await environment.exec(
                 f'mkdir -p "$(dirname {path})"\n'
                 f"cat > {path} <<'TAMPER_EOF'\n{payload}\nTAMPER_EOF\n"
