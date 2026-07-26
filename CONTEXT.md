@@ -127,11 +127,13 @@ rather than re-argued in each module.
 
 ## Trajectory reachability
 
-A probe is a `BaseAgent`, and `BaseAgent.SUPPORTS_ATIF` is `False`: only
-Harbor's agent *adapters* (`pi`, `claude_code`, …) rebuild
-`/logs/agent/trajectory.json` from a runtime event stream. So a probe that
-shells out to a world's tool bodies mutates real state and writes the
-in-container ledger, but **no host-built trajectory records those calls**.
+An agent gets a trajectory only by writing one: Harbor's adapters (`pi`,
+`claude_code`, …) each rebuild `/logs/agent/trajectory.json` from their
+runtime's event stream, and declare it by setting `SUPPORTS_ATIF = True`. Every
+probe here inherits `BaseAgent.SUPPORTS_ATIF = False` and writes no trajectory —
+correctly, since invariant 3 forbids it. So a probe that shells out to a world's
+tool bodies mutates real state and writes the in-container ledger, but **nothing
+host-witnessed records those calls**.
 
 The consequence is the limit of this package: against a world whose criteria
 are conditioned on trajectory coverage, every probe here scores zero before
