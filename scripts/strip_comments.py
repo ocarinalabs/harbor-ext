@@ -43,6 +43,7 @@ Usage::
 
 from __future__ import annotations
 
+# strip-comments: reviewed
 import argparse
 import io
 import re
